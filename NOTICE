@@ -1,0 +1,52 @@
+gocoon
+Copyright 2026 Digital Resistance
+
+This product is licensed under the Apache License, Version 2.0.
+
+Third-party notices and attributions:
+
+1. COCOON protocol and contract compatibility
+
+   This project implements compatibility with the public COCOON protocol and
+   smart-contract interfaces published by Telegram FZ-LLC.
+
+   Upstream projects:
+
+   - TelegramMessenger/cocoon
+     https://github.com/TelegramMessenger/cocoon
+
+   - TelegramMessenger/cocoon-contracts
+     https://github.com/TelegramMessenger/cocoon-contracts
+
+   Upstream notice:
+
+   Copyright 2025 Telegram FZ-LLC
+
+   The upstream COCOON repositories are licensed under the Apache License,
+   Version 2.0.
+
+2. Upstream-derived or embedded materials
+
+   The following files in this repository include, derive from, or document
+   behavior from the upstream COCOON projects for protocol and contract
+   compatibility:
+
+   - references/cocoon_api.tl
+   - pkg/resources/cocoon/cocoon-wallet.code.json
+   - pkg/contracts/root
+   - pkg/contracts/client
+   - pkg/contracts/wallet
+   - pkg/tl
+   - pkg/router
+   - pkg/cocoon
+
+   Go source files in those packages are original Go implementations by
+   Digital Resistance unless a file states otherwise. Protocol layouts,
+   message identifiers, contract opcodes, storage layouts, and embedded
+   contract bytecode are kept compatible with the upstream COCOON projects.
+
+3. No endorsement
+
+   gocoon is an independent project. It is not an official Telegram product
+   and is not endorsed by Telegram FZ-LLC. Telegram and COCOON names are used
+   only to describe protocol compatibility and attribution.
