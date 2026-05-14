@@ -24,7 +24,7 @@ import (
 // Upstream parity: the C++ client builds a similar self-signed cert via
 // tee/cocoon/tdx.cpp::generate_tdx_self_signed_cert, embedding a TDX quote
 // in custom X.509 OIDs `1.3.6.1.4.1.12345.{1,2}`. In policy=any mode the
-// server's verifier does NOT validate OID contents — but it DOES read the
+// server's verifier does NOT validate OID contents , but it DOES read the
 // public key from the cert and treat it as the peer identity. So the key
 // matters even if the OIDs are absent.
 func GenerateRATLSClientCert(nodeKey ed25519.PrivateKey) (tls.Certificate, error) {

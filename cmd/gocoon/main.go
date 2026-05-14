@@ -86,7 +86,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "gocoon — COCOON client CLI")
+	fmt.Fprintln(os.Stderr, "gocoon : COCOON client CLI")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Usage:")
 	fmt.Fprintln(os.Stderr, "  gocoon <command> [args]")
@@ -136,7 +136,7 @@ func cmdHelp(args []string) error {
 		return nil
 	}
 	if cmd, ok := commands[args[0]]; ok {
-		fmt.Printf("gocoon %s — %s\n", args[0], cmd.summary)
+		fmt.Printf("gocoon %s : %s\n", args[0], cmd.summary)
 		return nil
 	}
 	return fmt.Errorf("unknown command %q", args[0])
@@ -225,7 +225,7 @@ func cmdRoot(args []string) error {
 }
 
 func printRootUsage(out *os.File) {
-	fmt.Fprintln(out, "gocoon root — read COCOON root contract config")
+	fmt.Fprintln(out, "gocoon root : read COCOON root contract config")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Usage:")
 	fmt.Fprintln(out, "  gocoon root --config ./gocoon-data/client-config.json")
@@ -457,7 +457,7 @@ func printInitSummary(out io.Writer, s initSummary) {
 }
 
 func printInitUsage(out *os.File) {
-	fmt.Fprintln(out, "gocoon init — create standalone wallet and runner config")
+	fmt.Fprintln(out, "gocoon init : create standalone wallet and runner config")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Usage:")
 	fmt.Fprintln(out, "  gocoon init --dir ./gocoon-data [--json]")
@@ -568,7 +568,7 @@ func preflightOutputFile(path string, force bool) error {
 }
 
 func printConfigUsage(out *os.File) {
-	fmt.Fprintln(out, "gocoon config — standalone runner configuration")
+	fmt.Fprintln(out, "gocoon config : standalone runner configuration")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Usage:")
 	fmt.Fprintln(out, "  gocoon config generate --wallet wallet.json --ton-config global.config.json [--out client-config.json]")
@@ -598,7 +598,7 @@ func cmdRun(args []string) error {
 }
 
 func printRunUsage(out *os.File) {
-	fmt.Fprintln(out, "gocoon run — start the local gocoon-runner")
+	fmt.Fprintln(out, "gocoon run : start the local gocoon-runner")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Usage:")
 	fmt.Fprintln(out, "  gocoon run --config client-config.json [--runner ./gocoon-runner] [-v 3]")
@@ -1548,7 +1548,7 @@ func formatNanoTON(n *big.Int) string {
 }
 
 func printWalletUsage(out *os.File) {
-	fmt.Fprintln(out, "gocoon wallet — Cocoon wallet generation and inspection")
+	fmt.Fprintln(out, "gocoon wallet : Cocoon wallet generation and inspection")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Usage:")
 	fmt.Fprintln(out, "  gocoon wallet generate [--wallet-code path] [--pretty]")

@@ -13,7 +13,7 @@ import (
 // handshake encapsulates the multi-step session bring-up used by upstream
 // COCOON proxies.
 //
-// Sequence (after TLS is up — RA-TLS attestation read is in attestation.go):
+// Sequence (after TLS is up , RA-TLS attestation read is in attestation.go):
 //
 //   1. Client sends tcp.connect with random int64 id.
 //   2. Server replies tcp.connected (echo of id is by spec but not enforced).

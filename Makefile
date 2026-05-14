@@ -16,11 +16,12 @@ LDFLAGS += -X 'github.com/TONresistor/gocoon/pkg/cocoon.Commit=$(COMMIT)'
 LDFLAGS += -X 'github.com/TONresistor/gocoon/pkg/cocoon.BuildDate=$(DATE)'
 
 build:
+	mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/gocoon          ./cmd/gocoon
 	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/gocoon-runner   ./cmd/gocoon-runner
 
 build-cross:
-	@for target in $(DESKTOP_TARGETS); do \
+	@set -e; for target in $(DESKTOP_TARGETS); do \
 		goos=$${target%/*}; goarch=$${target#*/}; ext=""; \
 		if [ "$$goos" = "windows" ]; then ext=".exe"; fi; \
 		out="$(BUILD_DIR)/$$goos-$$goarch"; mkdir -p "$$out"; \
@@ -30,7 +31,7 @@ build-cross:
 	done
 
 build-android:
-	@for target in $(ANDROID_TARGETS); do \
+	@set -e; for target in $(ANDROID_TARGETS); do \
 		goos=$${target%/*}; goarch=$${target#*/}; \
 		out="$(BUILD_DIR)/$$goos-$$goarch"; mkdir -p "$$out"; \
 		echo "building $$target"; \

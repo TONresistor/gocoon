@@ -29,13 +29,13 @@ func (f DialerFunc) DialProxy(ctx context.Context, addr string) (net.Conn, error
 //
 //  1. TCP connect
 //  2. PoW pre-handshake (read 24-byte challenge, solve, write 12-byte response)
-//  3. TLS 1.3 mutual handshake — server REQUIRES a client certificate
+//  3. TLS 1.3 mutual handshake , server REQUIRES a client certificate
 //     (SSL_VERIFY_FAIL_IF_NO_PEER_CERT in upstream Tee.cpp:create_ssl_ctx).
 //     We present an ephemeral self-signed Ed25519 cert; in policy:any mode
 //     the server accepts a plain self-signed cert with no TDX OIDs.
 //
 // After TLS, control returns immediately to the regular TL framing layer
-// (no post-TLS attestation blob is exchanged — the attestation is fully
+// (no post-TLS attestation blob is exchanged , the attestation is fully
 // embedded in the cert OIDs handled during the TLS handshake itself, per
 // the verify_callback in tee/cocoon/RATLS.cpp).
 //
@@ -56,7 +56,7 @@ type DefaultDialer struct {
 	SkipPoW bool
 
 	// SkipAttestationRead is retained for compatibility but defaults to
-	// true and is ignored by the live path — upstream proxies do not send
+	// true and is ignored by the live path , upstream proxies do not send
 	// a post-TLS attestation blob; the attestation is embedded in the TLS
 	// cert OIDs handled by the TLS verify callback during the handshake.
 	SkipAttestationRead bool
@@ -143,7 +143,7 @@ func (d *DefaultDialer) DialProxy(ctx context.Context, addr string) (net.Conn, e
 	// No post-TLS attestation exchange. The attestation lives in cert OIDs
 	// (validated during TLS handshake by the verify callback). The next
 	// bytes on the wire are tcp.connect from us, then tcp.connected from
-	// the peer — handled by pkg/cocoon's transport+handshake layers.
+	// the peer , handled by pkg/cocoon's transport+handshake layers.
 	//
 	// The Skip* fields above are now no-ops on the live path. They remain
 	// to support custom test dialers that may insert extra steps.

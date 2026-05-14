@@ -4,7 +4,7 @@
 // Source FunC: TelegramMessenger/cocoon-contracts/contracts/cocoon_root.fc
 //
 // Get-method signatures and storage layout sourced from research agent
-// (HIGH confidence) — cross-validated against cocoon_root.fc and the TS
+// (HIGH confidence) , cross-validated against cocoon_root.fc and the TS
 // wrappers in cocoon-contracts/wrappers/CocoonRoot.ts.
 package root
 
