@@ -51,7 +51,7 @@ func runDiscovery(ctx context.Context, cli *cocoon.Client, api ton.APIClientWrap
 
 	// Try a real session against the first known proxy in the background.
 	// state.ProxyConnections / state.Proxies stay empty until a session is
-	// actually Ready , the previous "optimistic" population corrupted the
+	// actually Ready, the previous "optimistic" population corrupted the
 	// browser's stake-cache by writing the cocoon-wallet address as the
 	// client_sc address. We never lie about readiness now.
 	go tryConnectFirstProxy(ctx, cli, state, logger)
@@ -169,7 +169,7 @@ func splitEndpoints(raw string) []string {
 	case 1:
 		return tokens // workers == clients
 	default:
-		// Format: "workers clients [...]" , return the clients endpoint.
+		// Format: "workers clients [...]", return the clients endpoint.
 		return tokens[1:]
 	}
 }

@@ -189,7 +189,7 @@ func (t *transport) closeWithErr(err error) {
 // Without this loop, gocoon never sends a ping. The proxy times out after
 // 60s and forces a reconnect. Each reconnect triggers a long-auth handshake
 // that broadcasts an `owner_client_register` on chain and accumulates a
-// signed_payment with the proxy , both drain the cocoon wallet and the
+// signed_payment with the proxy, both drain the cocoon wallet and the
 // client_sc stake even when the bot is otherwise idle.
 //
 // Pings are only emitted once the tcp.connected exchange has completed
@@ -225,7 +225,7 @@ func newQueryID() QueryID {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		// Cryptographic RNG is not expected to fail on Linux; if it does,
-		// we panic , security invariant violated.
+		// we panic, security invariant violated.
 		panic(fmt.Sprintf("cocoon: secure rand failed: %v", err))
 	}
 	return QueryID(int64(binary.LittleEndian.Uint64(b[:])))

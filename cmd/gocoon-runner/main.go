@@ -140,7 +140,7 @@ func run(configPath string, logger *slog.Logger) error {
 	if err != nil {
 		logger.Warn("liteclient init failed (broadcaster offline)", "err", err)
 	} else {
-		// Probe chain access early , surface failure in logs.
+		// Probe chain access early, surface failure in logs.
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		if err := ensureChainAccess(ctx, api); err != nil {
 			logger.Warn("liteclient probe failed", "err", err)

@@ -155,7 +155,7 @@ func (s *Session) connect(ctx context.Context) error {
 	)
 	go s.removeOnTransportClose(tr)
 
-	// Keepalive ping every 10s , matches the upstream C++ client behavior
+	// Keepalive ping every 10s, matches the upstream C++ client behavior
 	// where send_ping_at = timeout()/2 = 10s. Without this, the proxy
 	// (server-side timeout = 60s) closes idle connections, forcing
 	// reconnect + on-chain re-register cycles that drain the cocoon wallet
