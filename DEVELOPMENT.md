@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Go 1.25+
-- Optional: `golangci-lint`
+- Optional: `golangci-lint`, `staticcheck` (both run in CI; install for local parity)
 
 ## Commands
 

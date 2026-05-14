@@ -4,6 +4,7 @@ Pure-Go COCOON client. Run decentralized AI inference on TON without Telegram's
 C++ runner build chain.
 
 - Standalone CLI with an **OpenAI-compatible local HTTP API**
+- OpenAI **function calling** support (`tools` array, `tool_calls` response)
 - Full on-chain payment flow: stake → chat → close → withdraw
 - Static cross-platform binaries (linux / darwin / windows × amd64 / arm64,
   android / arm64)
