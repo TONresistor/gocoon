@@ -178,13 +178,54 @@ func (t *transport) closeWithErr(err error) {
 	})
 }
 
+// StartKeepalive launches a goroutine that sends a tcp.ping every interval
+// to prevent the proxy from closing the connection due to inactivity.
+//
+// Upstream C++ behavior (cocoon/net/TcpConnection.hpp): the proxy (server
+// side) closes idle connections after `timeout() = 60s`. The canonical
+// client pings at `timeout()/2 = 10s` so that the server keeps resetting
+// its idle timer.
+//
+// Without this loop, gocoon never sends a ping. The proxy times out after
+// 60s and forces a reconnect. Each reconnect triggers a long-auth handshake
+// that broadcasts an `owner_client_register` on chain and accumulates a
+// signed_payment with the proxy , both drain the cocoon wallet and the
+// client_sc stake even when the bot is otherwise idle.
+//
+// Pings are only emitted once the tcp.connected exchange has completed
+// (matches upstream `sent_ready_` guard).
+func (t *transport) StartKeepalive(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-t.closed:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if !t.inited.Load() {
+					continue
+				}
+				id := int64(newQueryID())
+				if err := t.WriteFrame(tl.EncodeTCPPing(id)); err != nil {
+					t.logger.Debug("transport: keepalive ping failed", "err", err)
+					return
+				}
+				t.logger.Debug("transport: keepalive ping sent", "id", id)
+			}
+		}
+	}()
+}
+
 // newQueryID returns a cryptographically-random 64-bit identifier (matches
 // upstream td::Random::secure_uint64 usage).
 func newQueryID() QueryID {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		// Cryptographic RNG is not expected to fail on Linux; if it does,
-		// we panic — security invariant violated.
+		// we panic , security invariant violated.
 		panic(fmt.Sprintf("cocoon: secure rand failed: %v", err))
 	}
 	return QueryID(int64(binary.LittleEndian.Uint64(b[:])))
