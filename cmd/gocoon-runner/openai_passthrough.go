@@ -7,15 +7,19 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/TONresistor/gocoon/pkg/cocoon"
 )
 
 // handleChatCompletions implements an OpenAI-compatible chat passthrough.
-// The body is forwarded as-is to the upstream proxy via Session.RunQuery,
-// and the proxy's streaming response is reframed as Server-Sent Events.
+// Two response shapes, picked from the inbound body:
+//   - `tools:[…]` → request and response are translated; one JSON document
+//   - otherwise   → upstream chunks are collected; one JSON document
+//
+// Streaming (`stream:true`) is force-disabled in the body before forwarding
+// to the proxy because the upstream proxy currently does not deliver SSE
+// content for stream:true requests (returns empty payload chunks).
 //
 // CORS preflight (OPTIONS) returns 200 with permissive headers so the
 // browser-side fetch passes.
@@ -46,10 +50,9 @@ func (cp *ControlPlane) handleChatCompletions(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Extract model + stream flag from JSON for routing.
+	// Extract model from JSON for routing.
 	var probe struct {
-		Model  string `json:"model"`
-		Stream bool   `json:"stream"`
+		Model string `json:"model"`
 	}
 	_ = json.Unmarshal(body, &probe)
 	model, err := cp.resolveModel(r.Context(), sess, probe.Model)
@@ -61,6 +64,21 @@ func (cp *ControlPlane) handleChatCompletions(w http.ResponseWriter, r *http.Req
 		body, err = rewriteJSONModel(body, model)
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, "model rewrite: "+err.Error())
+			return
+		}
+	}
+
+	hadTools := requestHasTools(body)
+	if hadTools {
+		body, err = translateRequestBody(body)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "tools translate: "+err.Error())
+			return
+		}
+	} else {
+		body, err = forceNonStream(body)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "force non-stream: "+err.Error())
 			return
 		}
 	}
@@ -80,11 +98,23 @@ func (cp *ControlPlane) handleChatCompletions(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if probe.Stream {
-		cp.streamSSE(w, stream)
+	if hadTools {
+		cp.collectTranslateRespond(w, stream)
 		return
 	}
 	cp.collectAndRespond(w, stream)
+}
+
+// forceNonStream rewrites the body to set "stream": false. Streaming is
+// disabled because the upstream proxy does not currently deliver SSE
+// content for stream:true requests (returns empty payload chunks).
+func forceNonStream(body []byte) ([]byte, error) {
+	var obj map[string]any
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return nil, fmt.Errorf("decode body: %w", err)
+	}
+	obj["stream"] = false
+	return json.Marshal(obj)
 }
 
 // pickSession returns the first Ready session, or an error if none.
@@ -132,39 +162,6 @@ func rewriteJSONModel(body []byte, model string) ([]byte, error) {
 	return json.Marshal(obj)
 }
 
-// streamSSE forwards chunks as Server-Sent Events.
-func (cp *ControlPlane) streamSSE(w http.ResponseWriter, stream <-chan cocoon.Chunk) {
-	flusher, ok := w.(http.Flusher)
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-
-	for chunk := range stream {
-		if chunk.Err != nil {
-			fmt.Fprintf(w, "data: %s\n\n", jsonEncode(map[string]any{
-				"error": chunk.Err.Error(),
-			}))
-		} else {
-			// The bytes the proxy sent are the upstream model output. We
-			// pass them through as one SSE data event.
-			if len(chunk.Bytes) > 0 {
-				fmt.Fprintf(w, "data: %s\n\n", chunk.Bytes)
-			}
-		}
-		if ok {
-			flusher.Flush()
-		}
-		if chunk.IsFinal {
-			break
-		}
-	}
-	fmt.Fprint(w, "data: [DONE]\n\n")
-	if ok {
-		flusher.Flush()
-	}
-}
-
 // collectAndRespond collects all chunks into a single JSON response.
 func (cp *ControlPlane) collectAndRespond(w http.ResponseWriter, stream <-chan cocoon.Chunk) {
 	var buf []byte
@@ -182,6 +179,31 @@ func (cp *ControlPlane) collectAndRespond(w http.ResponseWriter, stream <-chan c
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(buf)
+}
+
+// collectTranslateRespond collects the upstream response, then runs it
+// through translateResponseBody so any <tool_call> blocks become an
+// OpenAI-shape `tool_calls` array.
+func (cp *ControlPlane) collectTranslateRespond(w http.ResponseWriter, stream <-chan cocoon.Chunk) {
+	var buf []byte
+	var lastErr error
+	for chunk := range stream {
+		if chunk.Err != nil {
+			lastErr = chunk.Err
+		}
+		buf = append(buf, chunk.Bytes...)
+	}
+	// Translate path requires a complete OpenAI Chat Completions JSON to
+	// produce a valid `tool_calls` array. Any upstream error invalidates
+	// the buffer, so refuse rather than risk delivering corrupt output.
+	if lastErr != nil {
+		writeJSONError(w, http.StatusBadGateway, lastErr.Error())
+		return
+	}
+	out, _ := translateResponseBody(buf)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(out)
 }
 
 // handleModels lists models available on the connected proxies.
@@ -247,12 +269,4 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 		},
 	}
 	_ = json.NewEncoder(w).Encode(body)
-}
-
-func jsonEncode(v any) string {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return `{"error":"encode failed"}`
-	}
-	return strings.ReplaceAll(string(b), "\n", " ")
 }
