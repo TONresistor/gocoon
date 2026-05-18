@@ -342,7 +342,11 @@ func bodyOpHex(body *cell.Cell) string {
 	if body == nil {
 		return ""
 	}
-	op, err := body.BeginParse().LoadUInt(32)
+	s, err := body.BeginParse()
+	if err != nil {
+		return "unread"
+	}
+	op, err := s.LoadUInt(32)
 	if err != nil {
 		return "unread"
 	}

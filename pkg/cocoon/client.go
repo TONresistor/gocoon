@@ -270,7 +270,10 @@ func decodeClientRequestBalance(data *cell.Cell) (*big.Int, error) {
 	if data == nil {
 		return big.NewInt(0), nil
 	}
-	s := data.BeginParse()
+	s, err := data.BeginParse()
+	if err != nil {
+		return nil, err
+	}
 	if _, err := s.LoadUInt(2); err != nil {
 		return nil, err
 	}

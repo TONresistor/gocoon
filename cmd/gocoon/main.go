@@ -814,7 +814,10 @@ type parsedClientSCData struct {
 }
 
 func parseClientSCData(data cellData) (*parsedClientSCData, error) {
-	s := data.BeginParse()
+	s, err := data.BeginParse()
+	if err != nil {
+		return nil, fmt.Errorf("channel info: begin parse: %w", err)
+	}
 	state, err := s.LoadUInt(2)
 	if err != nil {
 		return nil, fmt.Errorf("channel info: parse state: %w", err)
@@ -845,7 +848,7 @@ func parseClientSCData(data cellData) (*parsedClientSCData, error) {
 }
 
 type cellData interface {
-	BeginParse() *cell.Slice
+	BeginParse() (*cell.Slice, error)
 }
 
 func clientStateName(state uint8) string {
@@ -1482,7 +1485,7 @@ func newTONAPI(tonConfigPath string) (ton.APIClientWrapped, error) {
 	if err := pool.AddConnectionsFromConfigFile(tonConfigPath); err != nil {
 		return nil, fmt.Errorf("liteclient: %w", err)
 	}
-	return ton.NewAPIClient(pool).WithRetry(3), nil
+	return ton.NewAPIClient(pool).WithRetryTimeout(3, 0*time.Second), nil
 }
 
 func printWalletInfo(out io.Writer, info walletInfoOutput) {

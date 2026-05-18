@@ -180,6 +180,6 @@ func (c *Client) rootReader() (*root.Reader, error) {
 		pool = p
 		c.cfg.LiteClient = pool
 	}
-	api := ton.NewAPIClient(pool).WithRetry(3)
+	api := ton.NewAPIClient(pool).WithRetryTimeout(3, 0*time.Second)
 	return root.NewReader(api, c.cfg.RootAddress.String())
 }

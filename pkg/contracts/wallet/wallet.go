@@ -199,7 +199,7 @@ func CreateSignedExternalMessage(messages []OutboundMessage, secretKey ed25519.P
 	// (bits + refs) via StoreBuilder.
 	final := cell.BeginCell().
 		MustStoreSlice(sig, 64*8).
-		MustStoreBuilder(bodyCell.BeginParse().ToBuilder()).
+		MustStoreBuilder(bodyCell.MustBeginParse().ToBuilder()).
 		EndCell()
 	return final, nil
 }

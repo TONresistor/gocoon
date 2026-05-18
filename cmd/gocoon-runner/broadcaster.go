@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/TONresistor/gocoon/pkg/cocoon"
 	"github.com/TONresistor/gocoon/pkg/contracts/wallet"
@@ -38,7 +39,7 @@ func buildLiteclientStack(cfg *ClientConfig, configPath string, logger *slog.Log
 	if err := pool.AddConnectionsFromConfigFile(tonCfg); err != nil {
 		return nil, nil, nil, fmt.Errorf("liteclient: %w", err)
 	}
-	api := ton.NewAPIClient(pool).WithRetry(3)
+	api := ton.NewAPIClient(pool).WithRetryTimeout(3, 0*time.Second)
 
 	// Load cocoon_wallet code BoC.
 	walletCode, err := loadWalletCode()

@@ -295,7 +295,10 @@ func (r *Reader) LastProxySeqno(ctx context.Context) (uint32, error) {
 }
 
 func parseStateSnapshot(top *cell.Cell) (*StateSnapshot, error) {
-	s := top.BeginParse()
+	s, err := top.BeginParse()
+	if err != nil {
+		return nil, fmt.Errorf("root: top: begin parse: %w", err)
+	}
 	if _, err := s.LoadAddr(); err != nil {
 		return nil, fmt.Errorf("root: top: load owner addr: %w", err)
 	}
@@ -329,10 +332,12 @@ func parseParamsCell(params *cell.Cell) (*StateSnapshot, error) {
 	if params == nil {
 		return nil, errors.New("root: params cell is nil")
 	}
-	s := params.BeginParse()
+	s, err := params.BeginParse()
+	if err != nil {
+		return nil, fmt.Errorf("root: params: begin parse: %w", err)
+	}
 	snap := &StateSnapshot{}
 
-	var err error
 	if snap.StructVersion, err = readU8(s, "struct_version"); err != nil {
 		return nil, err
 	}
@@ -621,7 +626,10 @@ func (r *Reader) RegisteredProxies(ctx context.Context) ([]ProxyEntry, error) {
 //	  ref[1]: params_cell
 //	  ref[2]: public_keys_manager_cell
 func loadRegisteredProxiesDict(top *cell.Cell) (*cell.Dictionary, error) {
-	s := top.BeginParse()
+	s, err := top.BeginParse()
+	if err != nil {
+		return nil, fmt.Errorf("root: top: begin parse: %w", err)
+	}
 	if _, err := s.LoadAddr(); err != nil {
 		return nil, fmt.Errorf("root: top: load owner addr: %w", err)
 	}

@@ -41,7 +41,7 @@ func TestEncodeStorageRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := c.BeginParse()
+	s := c.MustBeginParse()
 	seqno, _ := s.LoadInt(32)
 	if seqno != 0 {
 		t.Errorf("seqno should start at 0, got %d", seqno)
@@ -71,7 +71,7 @@ func TestBuildOutboundMessageCellShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := c.BeginParse()
+	s := c.MustBeginParse()
 	flag, _ := s.LoadUInt(6)
 	if flag != 0x18 {
 		t.Errorf("bounce flag: %#x, want 0x18", flag)
@@ -100,7 +100,7 @@ func TestCreateSignedExternalMessage(t *testing.T) {
 		t.Fatal("nil cell")
 	}
 	// Parse: 64-byte signature, then subwalletId/validUntil/seqno, then 8-bit mode + ref msg.
-	s := out.BeginParse()
+	s := out.MustBeginParse()
 	sig, err := s.LoadSlice(64 * 8)
 	if err != nil {
 		t.Fatal(err)

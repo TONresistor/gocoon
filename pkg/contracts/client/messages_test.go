@@ -25,7 +25,7 @@ func TestBuildExtTopUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := c.BeginParse()
+	s := c.MustBeginParse()
 	op, err := s.LoadUInt(32)
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +54,7 @@ func TestBuildOwnerRequestRefund(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := c.BeginParse()
+	s := c.MustBeginParse()
 	op, _ := s.LoadUInt(32)
 	if op != uint64(OpOwnerClientRequestRefund) {
 		t.Errorf("op: %#x, want %#x", op, OpOwnerClientRequestRefund)
@@ -67,7 +67,7 @@ func TestBuildOwnerWithdraw(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	op, _ := c.BeginParse().LoadUInt(32)
+	op, _ := c.MustBeginParse().LoadUInt(32)
 	if op != uint64(OpOwnerClientWithdraw) {
 		t.Errorf("op mismatch")
 	}
@@ -79,7 +79,7 @@ func TestBuildOwnerRegister(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := c.BeginParse()
+	s := c.MustBeginParse()
 	op, _ := s.LoadUInt(32)
 	if op != uint64(OpOwnerClientRegister) {
 		t.Errorf("op: %#x", op)
@@ -97,7 +97,7 @@ func TestBuildOwnerIncreaseStake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	op, _ := c.BeginParse().LoadUInt(32)
+	op, _ := c.MustBeginParse().LoadUInt(32)
 	if op != uint64(OpOwnerClientIncreaseStake) {
 		t.Errorf("op: %#x", op)
 	}
@@ -109,7 +109,7 @@ func TestSignedPayloadShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := cellp.BeginParse()
+	s := cellp.MustBeginParse()
 	op, _ := s.LoadUInt(32)
 	if op != uint64(OpChargeSigned) {
 		t.Errorf("op: %#x", op)
@@ -136,7 +136,7 @@ func TestBuildExtChargeSigned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := c.BeginParse()
+	s := c.MustBeginParse()
 	op, _ := s.LoadUInt(32)
 	if op != uint64(OpChargeSigned) {
 		t.Errorf("op: %#x", op)
@@ -183,7 +183,7 @@ func TestEncodeStorageRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := c.BeginParse()
+	s := c.MustBeginParse()
 	gotState, _ := s.LoadUInt(2)
 	if gotState != 0 {
 		t.Errorf("state mismatch: %d", gotState)
