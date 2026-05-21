@@ -138,13 +138,13 @@ func TestBytesShortFormPadding(t *testing.T) {
 		in       []byte
 		wantSize int
 	}{
-		{[]byte{}, 4},                                     // 1 hdr + 0 payload + 3 pad
-		{[]byte{0xaa}, 4},                                 // 1 + 1 + 2
-		{[]byte{0xaa, 0xbb}, 4},                           // 1 + 2 + 1
-		{[]byte{0xaa, 0xbb, 0xcc}, 4},                     // 1 + 3 + 0
-		{[]byte{0xaa, 0xbb, 0xcc, 0xdd}, 8},               // 1 + 4 + 3
-		{[]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}, 12},   // 1 + 11 + 0
-		{make([]byte, 253), 256},                          // 1 + 253 + 2
+		{[]byte{}, 4},                                   // 1 hdr + 0 payload + 3 pad
+		{[]byte{0xaa}, 4},                               // 1 + 1 + 2
+		{[]byte{0xaa, 0xbb}, 4},                         // 1 + 2 + 1
+		{[]byte{0xaa, 0xbb, 0xcc}, 4},                   // 1 + 3 + 0
+		{[]byte{0xaa, 0xbb, 0xcc, 0xdd}, 8},             // 1 + 4 + 3
+		{[]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}, 12}, // 1 + 11 + 0
+		{make([]byte, 253), 256},                        // 1 + 253 + 2
 	}
 	for _, tc := range tests {
 		w := NewWriter()
@@ -170,10 +170,10 @@ func TestBytesLongFormPadding(t *testing.T) {
 		size     int
 		wantSize int
 	}{
-		{254, 260},  // 4 hdr + 254 payload + 2 pad
-		{255, 260},  // 4 + 255 + 1
-		{256, 260},  // 4 + 256 + 0
-		{257, 264},  // 4 + 257 + 3
+		{254, 260},   // 4 hdr + 254 payload + 2 pad
+		{255, 260},   // 4 + 255 + 1
+		{256, 260},   // 4 + 256 + 0
+		{257, 264},   // 4 + 257 + 3
 		{1000, 1004}, // 4 + 1000 + 0
 	}
 	for _, tc := range tests {

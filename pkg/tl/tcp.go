@@ -104,11 +104,11 @@ const (
 
 // DecodedTCPPacket is the parsed result of one frame payload.
 type DecodedTCPPacket struct {
-	Kind     TCPPacketKind
-	ID       int64  // ping/pong/connect/connected/query/queryAnswer/queryError
-	Data     []byte // packet/query/queryAnswer
-	ErrCode  int32  // queryError
-	ErrMsg   string // queryError
+	Kind    TCPPacketKind
+	ID      int64  // ping/pong/connect/connected/query/queryAnswer/queryError
+	Data    []byte // packet/query/queryAnswer
+	ErrCode int32  // queryError
+	ErrMsg  string // queryError
 }
 
 // DecodeTCPPacket parses a frame payload into a DecodedTCPPacket.

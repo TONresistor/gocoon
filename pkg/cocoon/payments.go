@@ -23,8 +23,8 @@ type PreparedMessage struct {
 // ChannelOps provides the four payment-channel operations a client can
 // initiate against a deployed cocoon_client SC.
 type ChannelOps struct {
-	clientSCAddr   *address.Address
-	excessesTo     *address.Address
+	clientSCAddr *address.Address
+	excessesTo   *address.Address
 }
 
 // NewChannelOps returns a ChannelOps for the given (client SC, excesses recipient).

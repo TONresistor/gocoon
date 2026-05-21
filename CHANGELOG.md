@@ -4,6 +4,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-21
+
 ### Added
 
 - OpenAI tool-calling: `tools` requests are rewritten to a tag-based prompt;
@@ -31,5 +33,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Initial release: standalone CLI, local runner with OpenAI-compatible HTTP
   endpoint, on-chain payment flow, cross-platform binaries.
 
-[Unreleased]: https://github.com/TONresistor/gocoon/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/TONresistor/gocoon/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/TONresistor/gocoon/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/TONresistor/gocoon/releases/tag/v0.1.0

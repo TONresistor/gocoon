@@ -32,20 +32,20 @@ type RootSnapshot struct {
 // ClientSCSnapshot captures a get_cocoon_client_data result for a single
 // (client, proxy) pair.
 type ClientSCSnapshot struct {
-	State       uint8     // 0=normal, 1=closing, 2=closed
-	Balance     uint64    // nanoTON
-	Stake       uint64    // nanoTON
-	TokensUsed  uint64
-	UnlockTs    uint32    // unix seconds; meaningful when State=closing
-	SecretHash  [32]byte
-	FetchedAt   time.Time
+	State      uint8  // 0=normal, 1=closing, 2=closed
+	Balance    uint64 // nanoTON
+	Stake      uint64 // nanoTON
+	TokensUsed uint64
+	UnlockTs   uint32 // unix seconds; meaningful when State=closing
+	SecretHash [32]byte
+	FetchedAt  time.Time
 }
 
 // SignedPayment is a proxy-signed charge or refund-grant blob. Cached so the
 // browser/caller can broadcast it on chain at a later time.
 type SignedPayment struct {
-	Blob       []byte
-	StoredAt   time.Time
+	Blob     []byte
+	StoredAt time.Time
 }
 
 // ProxyAddress is the bounceable string form of a TON address (e.g.

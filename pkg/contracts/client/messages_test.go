@@ -84,8 +84,8 @@ func TestBuildOwnerRegister(t *testing.T) {
 	if op != uint64(OpOwnerClientRegister) {
 		t.Errorf("op: %#x", op)
 	}
-	_, _ = s.LoadUInt(64)              // query_id
-	nonce, _ := s.LoadUInt(64)         // nonce
+	_, _ = s.LoadUInt(64)      // query_id
+	nonce, _ := s.LoadUInt(64) // nonce
 	if nonce != 0xdeadbeef {
 		t.Errorf("nonce: %#x", nonce)
 	}
