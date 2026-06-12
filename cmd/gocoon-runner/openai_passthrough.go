@@ -23,9 +23,11 @@ import (
 //     UI streaming code works either way.
 //   - otherwise    → upstream chunks are collected; one JSON document
 //
-// Upstream streaming is gated behind GOCOON_UPSTREAM_STREAM=1 until verified
-// against the live network: the proxy was previously observed returning
-// empty payload chunks for stream:true requests.
+// Upstream streaming stays gated behind GOCOON_UPSTREAM_STREAM=1: verified
+// against the live network on 2026-06-12 — the proxy completes stream:true
+// requests but every payload chunk arrives EMPTY (the worker's SSE bytes
+// never reach the client), so the conversion fallback is the default until
+// upstream fixes proxy-side streaming.
 //
 // CORS preflight (OPTIONS) returns 200 with permissive headers so the
 // browser-side fetch passes.
