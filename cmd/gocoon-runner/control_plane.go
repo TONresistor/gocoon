@@ -219,6 +219,11 @@ func (r *statusRecorder) WriteHeader(code int) {
 }
 
 func (cp *ControlPlane) handleJSONStats(w http.ResponseWriter, r *http.Request) {
+	cp.applyCORS(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -254,6 +259,11 @@ func (cp *ControlPlane) handleJSONStats(w http.ResponseWriter, r *http.Request) 
 // broadcasts it via the configured cocoon-wallet broadcaster.
 func (cp *ControlPlane) requestHandler(verb string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		cp.applyCORS(w)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html")
 		proxyAddr := strings.TrimSpace(r.URL.Query().Get("proxy"))
 		if proxyAddr == "" {

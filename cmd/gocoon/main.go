@@ -773,102 +773,22 @@ func fetchClientSCInfo(ctx context.Context, tonConfigPath, clientSCAddr string) 
 	if err != nil {
 		return nil, fmt.Errorf("channel info: parse client-sc: %w", err)
 	}
-	mc, err := api.CurrentMasterchainInfo(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("channel info: masterchain info: %w", err)
-	}
-	acc, err := api.GetAccount(ctx, mc, addr)
-	if err != nil {
-		return nil, fmt.Errorf("channel info: get account: %w", err)
-	}
-	out := &clientSCInfo{
-		Address:       clientSCAddr,
-		AccountStatus: "missing",
-		StateName:     "missing",
-		BalanceNano:   "0",
-		BalanceTON:    "0",
-		StakeNano:     "0",
-		StakeTON:      "0",
-	}
-	if acc == nil || acc.State == nil {
-		return out, nil
-	}
-	out.AccountStatus = fmt.Sprint(acc.State.Status)
-	if acc.Data == nil {
-		return out, nil
-	}
-	parsed, err := parseClientSCData(acc.Data)
+	info, err := setup.FetchChannelInfo(ctx, api, addr)
 	if err != nil {
 		return nil, err
 	}
-	out.State = parsed.State
-	out.StateName = clientStateName(parsed.State)
-	out.BalanceNano = parsed.Balance.String()
-	out.BalanceTON = formatNanoTON(parsed.Balance)
-	out.StakeNano = parsed.Stake.String()
-	out.StakeTON = formatNanoTON(parsed.Stake)
-	out.TokensUsed = parsed.TokensUsed
-	out.UnlockTs = parsed.UnlockTs
-	return out, nil
-}
-
-type parsedClientSCData struct {
-	State      uint8
-	Balance    *big.Int
-	Stake      *big.Int
-	TokensUsed uint64
-	UnlockTs   uint32
-}
-
-func parseClientSCData(data cellData) (*parsedClientSCData, error) {
-	s, err := data.BeginParse()
-	if err != nil {
-		return nil, fmt.Errorf("channel info: begin parse: %w", err)
-	}
-	state, err := s.LoadUInt(2)
-	if err != nil {
-		return nil, fmt.Errorf("channel info: parse state: %w", err)
-	}
-	balance, err := s.LoadBigCoins()
-	if err != nil {
-		return nil, fmt.Errorf("channel info: parse balance: %w", err)
-	}
-	stake, err := s.LoadBigCoins()
-	if err != nil {
-		return nil, fmt.Errorf("channel info: parse stake: %w", err)
-	}
-	tokensUsed, err := s.LoadUInt(64)
-	if err != nil {
-		return nil, fmt.Errorf("channel info: parse tokens_used: %w", err)
-	}
-	unlockTs, err := s.LoadUInt(32)
-	if err != nil {
-		return nil, fmt.Errorf("channel info: parse unlock_ts: %w", err)
-	}
-	return &parsedClientSCData{
-		State:      uint8(state),
-		Balance:    balance,
-		Stake:      stake,
-		TokensUsed: tokensUsed,
-		UnlockTs:   uint32(unlockTs),
+	return &clientSCInfo{
+		Address:       clientSCAddr,
+		AccountStatus: info.AccountStatus,
+		State:         info.State,
+		StateName:     info.StateName,
+		BalanceNano:   info.BalanceNano.String(),
+		BalanceTON:    formatNanoTON(info.BalanceNano),
+		StakeNano:     info.StakeNano.String(),
+		StakeTON:      formatNanoTON(info.StakeNano),
+		TokensUsed:    info.TokensUsed,
+		UnlockTs:      info.UnlockTs,
 	}, nil
-}
-
-type cellData interface {
-	BeginParse() (*cell.Slice, error)
-}
-
-func clientStateName(state uint8) string {
-	switch state {
-	case 0:
-		return "active"
-	case 1:
-		return "closing"
-	case 2:
-		return "closed"
-	default:
-		return "unknown"
-	}
 }
 
 func printClientSCInfo(out io.Writer, info *clientSCInfo) {

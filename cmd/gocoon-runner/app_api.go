@@ -43,9 +43,18 @@ type AppAPI struct {
 	fundStatus    *setup.FundingStatus
 	fundErr       error
 	fundFetchedAt time.Time
+
+	chanMu        sync.Mutex
+	chanInfo      *setup.ChannelInfo
+	chanErr       error
+	chanFetchedAt time.Time
+	chanFetching  bool
 }
 
-const fundingCacheTTL = 10 * time.Second
+const (
+	fundingCacheTTL = 10 * time.Second
+	channelCacheTTL = 60 * time.Second
+)
 
 // NewAppAPI wires the app endpoints for a data directory.
 func NewAppAPI(dataDir string, port int, engine *Engine, state *RunnerState, logs *logRing, logger *slog.Logger) *AppAPI {
@@ -126,6 +135,23 @@ type appWalletState struct {
 	Funded                 *bool  `json:"funded,omitempty"`
 	MinClientStakeNano     string `json:"min_client_stake_nano,omitempty"`
 	MinClientStakeTON      string `json:"min_client_stake_ton,omitempty"`
+
+	// Channel is an existing on-chain payment channel funded from this
+	// wallet, rediscovered from transaction history. A funded active channel
+	// means the wallet itself does not need the recommended balance.
+	Channel    *appChannelState `json:"channel,omitempty"`
+	ChannelErr string           `json:"channel_error,omitempty"`
+}
+
+type appChannelState struct {
+	Address     string `json:"address"`
+	State       string `json:"state"`
+	Active      bool   `json:"active"`
+	BalanceNano string `json:"balance_nano"`
+	BalanceTON  string `json:"balance_ton"`
+	StakeNano   string `json:"stake_nano"`
+	StakeTON    string `json:"stake_ton"`
+	TokensUsed  uint64 `json:"tokens_used"`
 }
 
 type appVersion struct {
@@ -159,8 +185,56 @@ func (a *AppAPI) snapshot(ctx context.Context) appState {
 		RecommendedFundingTON:  setup.FormatNanoTON(new(big.Int).SetUint64(setup.RecommendedFundingNano)),
 	}
 	a.fillBalance(ctx, wallet)
+	a.fillChannel(ctx, wallet)
 	st.Wallet = wallet
 	return st
+}
+
+// fillChannel rediscovers an existing payment channel from the wallet's
+// transaction history. This is what lets a returning user skip the funding
+// screen: the stake already sits in the channel, not the wallet. The scan
+// takes seconds, so it runs in the background and /api/state serves the
+// cached result; the UI's regular polling picks the channel up when ready.
+func (a *AppAPI) fillChannel(_ context.Context, wallet *appWalletState) {
+	a.chanMu.Lock()
+	defer a.chanMu.Unlock()
+	if time.Since(a.chanFetchedAt) >= channelCacheTTL && !a.chanFetching {
+		a.chanFetching = true
+		fundAddress := wallet.FundAddress
+		go func() {
+			fetchCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			info, err := setup.FindChannel(fetchCtx, a.paths.TONConfigPath, fundAddress)
+			cancel()
+			a.chanMu.Lock()
+			a.chanInfo, a.chanErr = info, err
+			a.chanFetchedAt = time.Now()
+			a.chanFetching = false
+			a.chanMu.Unlock()
+			if err != nil {
+				a.logger.Warn("app: channel scan failed", "err", err)
+			} else if info != nil {
+				a.logger.Info("app: channel found", "client_sc", info.Address, "state", info.StateName,
+					"balance_nano", info.BalanceNano.String())
+			}
+		}()
+	}
+	if a.chanErr != nil {
+		wallet.ChannelErr = a.chanErr.Error()
+		return
+	}
+	if a.chanInfo == nil {
+		return
+	}
+	wallet.Channel = &appChannelState{
+		Address:     a.chanInfo.Address,
+		State:       a.chanInfo.StateName,
+		Active:      a.chanInfo.Active(),
+		BalanceNano: a.chanInfo.BalanceNano.String(),
+		BalanceTON:  setup.FormatNanoTON(a.chanInfo.BalanceNano),
+		StakeNano:   a.chanInfo.StakeNano.String(),
+		StakeTON:    setup.FormatNanoTON(a.chanInfo.StakeNano),
+		TokensUsed:  a.chanInfo.TokensUsed,
+	}
 }
 
 // fillBalance picks the cheapest trustworthy balance source: the discovery
@@ -219,6 +293,10 @@ func (a *AppAPI) invalidateFundingCache() {
 	a.fundStatus, a.fundErr = nil, nil
 	a.fundFetchedAt = time.Time{}
 	a.fundMu.Unlock()
+	a.chanMu.Lock()
+	a.chanInfo, a.chanErr = nil, nil
+	a.chanFetchedAt = time.Time{}
+	a.chanMu.Unlock()
 }
 
 func (a *AppAPI) handleState(w http.ResponseWriter, r *http.Request) {
