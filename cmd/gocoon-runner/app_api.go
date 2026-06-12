@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -35,6 +36,7 @@ type AppAPI struct {
 	state  *RunnerState
 	logger *slog.Logger
 	logs   *logRing
+	chats  *ChatStore
 	port   int
 
 	fundMu        sync.Mutex
@@ -53,6 +55,7 @@ func NewAppAPI(dataDir string, port int, engine *Engine, state *RunnerState, log
 		state:  state,
 		logger: logger,
 		logs:   logs,
+		chats:  NewChatStore(filepath.Join(dataDir, "chats")),
 		port:   port,
 	}
 }
@@ -80,6 +83,19 @@ func (a *AppAPI) routes(mux *http.ServeMux, cors func(http.ResponseWriter)) {
 	mux.HandleFunc("/api/engine/start", wrap(http.MethodPost, a.handleEngineStart))
 	mux.HandleFunc("/api/engine/stop", wrap(http.MethodPost, a.handleEngineStop))
 	mux.HandleFunc("/api/logs", wrap(http.MethodGet, a.handleLogs))
+
+	wrapAny := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			cors(w)
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			h(w, r)
+		}
+	}
+	mux.HandleFunc("/api/chats", wrapAny(a.handleChats))
+	mux.HandleFunc("/api/chats/{id}", wrapAny(a.handleChatByID))
 }
 
 // appState is the aggregate snapshot the UI polls.
