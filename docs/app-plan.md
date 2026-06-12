@@ -55,8 +55,9 @@
   тестами через `pkg/cocoon/internal/fakeproxy`.
 - Персистентность: история диалогов и сессии в bbolt (data dir).
 
-### 2. Приложение (Tauri 2)
-- Скаффолд `desktop/`: Tauri 2 + React + TS + Tailwind + Vite.
+### 2. Приложение (Tauri 2) — ✅ каркас готов
+- Воркспейс `cocoon-app/`: `gocoon/` (форк, ядро) + `desktop/` (Tauri-апка).
+- Скаффолд `desktop/`: Tauri 2 + React + TS + Vite (Tailwind — при редизайне).
 - gocoon-runner как Tauri sidecar (externalBin), lifecycle из Rust.
 - Demo-режим на fakeproxy — разработка UI без траты TON (сеть mainnet-only,
   полный цикл стоит ~20 TON).
@@ -93,5 +94,6 @@ Tauri 2 умеет iOS/Android, но sidecar-процессы на мобилк�
 - Mainnet-only: полноценное e2e-тестирование стоит реальных TON;
   для разработки — fakeproxy/demo-режим.
 - macOS-сборку нужно где-то выполнять (нет Mac под рукой → GitHub Actions).
-- Upstream: репозиторий — клон TONresistor/gocoon; вести работу в ветке,
-  полезные фиксы ядра можно предлагать апстриму.
+- Upstream: ядро живёт в форке attikusfinch/gocoon (ветка app-rework),
+  upstream — TONresistor/gocoon; полезные фиксы ядра можно предлагать
+  апстриму.
