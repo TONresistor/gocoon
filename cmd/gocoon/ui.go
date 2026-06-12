@@ -25,8 +25,7 @@ import (
 
 	"github.com/skip2/go-qrcode"
 
-	cocoonwallet "github.com/TONresistor/gocoon/pkg/contracts/wallet"
-	"github.com/TONresistor/gocoon/pkg/resources"
+	"github.com/TONresistor/gocoon/pkg/setup"
 )
 
 const defaultUIAddr = "127.0.0.1:17770"
@@ -170,15 +169,7 @@ type uiModel struct {
 	Workers int    `json:"workers"`
 }
 
-type uiWalletBackup struct {
-	WalletPath        string   `json:"wallet_path"`
-	OwnerMnemonic     []string `json:"owner_mnemonic"`
-	OwnerMnemonicText string   `json:"owner_mnemonic_text"`
-	NodeSecretBase64  string   `json:"node_secret_base64"`
-	OwnerAddress      string   `json:"owner_address"`
-	FundAddress       string   `json:"fund_address"`
-	BackupJSON        string   `json:"backup_json"`
-}
+type uiWalletBackup = setup.Backup
 
 type uiChatResponse struct {
 	Content  string          `json:"content"`
@@ -583,95 +574,15 @@ func (ui *uiServer) fetchModels() ([]uiModel, error) {
 }
 
 func createUIFiles(dir string, force bool, httpPort, rpcPort int) (*uiWalletBackup, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("init: create dir: %w", err)
-	}
-	walletPath := filepath.Join(dir, "wallet.json")
-	configPath := filepath.Join(dir, "client-config.json")
-	tonConfigPath := filepath.Join(dir, "ton-config.json")
-	for _, path := range []string{walletPath, configPath, tonConfigPath} {
-		if err := preflightOutputFile(path, force); err != nil {
-			return nil, err
-		}
-	}
-	code, _, err := cocoonwallet.LoadDefaultCode()
-	if err != nil {
-		return nil, err
-	}
-	generated, err := cocoonwallet.Generate(cocoonwallet.GenerateOptions{Code: code})
-	if err != nil {
-		return nil, err
-	}
-	walletJSON, err := json.MarshalIndent(generated, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	walletJSON = append(walletJSON, '\n')
-	if err := writeOutputFile(walletPath, walletJSON, 0o600, force); err != nil {
-		return nil, err
-	}
-	if err := writeOutputFile(tonConfigPath, resources.TONConfigJSON, 0o600, force); err != nil {
-		return nil, err
-	}
-	absTonConfig, err := filepath.Abs(tonConfigPath)
-	if err != nil {
-		return nil, err
-	}
-	cfg := runnerConfigJSON{
-		IsTest:            false,
-		IsTestnet:         false,
-		HTTPPort:          httpPort,
-		RPCPort:           rpcPort,
-		ProxyConnections:  1,
-		TonConfigFilename: absTonConfig,
-		OwnerAddress:      generated.OwnerAddress,
-		RootContractAddr:  defaultMainnetRoot,
-		NodeWalletKey:     generated.NodeSecretBase64,
-		MaxCoefficient:    0,
-		MaxTokens:         0,
-	}
-	configJSON, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	configJSON = append(configJSON, '\n')
-	if err := writeOutputFile(configPath, configJSON, 0o600, force); err != nil {
-		return nil, err
-	}
-	return newUIWalletBackup(walletPath, generated, walletJSON), nil
+	return setup.Create(dir, setup.CreateOptions{
+		HTTPPort: httpPort,
+		RPCPort:  rpcPort,
+		Force:    force,
+	})
 }
 
 func readUIWalletBackup(walletPath string) (*uiWalletBackup, error) {
-	raw, err := os.ReadFile(walletPath)
-	if err != nil {
-		return nil, fmt.Errorf("backup: read wallet: %w", err)
-	}
-	var generated cocoonwallet.Generated
-	if err := json.Unmarshal(raw, &generated); err != nil {
-		return nil, fmt.Errorf("backup: parse wallet: %w", err)
-	}
-	if len(generated.OwnerMnemonic) == 0 || generated.NodeSecretBase64 == "" {
-		return nil, errors.New("backup: wallet file does not contain recovery data")
-	}
-	var pretty bytes.Buffer
-	backupJSON := raw
-	if err := json.Indent(&pretty, raw, "", "  "); err == nil {
-		pretty.WriteByte('\n')
-		backupJSON = pretty.Bytes()
-	}
-	return newUIWalletBackup(walletPath, &generated, backupJSON), nil
-}
-
-func newUIWalletBackup(walletPath string, generated *cocoonwallet.Generated, walletJSON []byte) *uiWalletBackup {
-	return &uiWalletBackup{
-		WalletPath:        walletPath,
-		OwnerMnemonic:     append([]string(nil), generated.OwnerMnemonic...),
-		OwnerMnemonicText: strings.Join(generated.OwnerMnemonic, " "),
-		NodeSecretBase64:  generated.NodeSecretBase64,
-		OwnerAddress:      generated.OwnerAddress,
-		FundAddress:       generated.NodeAddress,
-		BackupJSON:        string(walletJSON),
-	}
+	return setup.ReadBackup(walletPath)
 }
 
 func parseUIChatResponse(data []byte) *uiChatResponse {
@@ -957,13 +868,11 @@ func writeJSONError(w http.ResponseWriter, code int, message string) {
 }
 
 func fileExists(path string) bool {
-	st, err := os.Stat(path)
-	return err == nil && !st.IsDir()
+	return setup.FileExists(path)
 }
 
 func nonEmptyFileExists(path string) bool {
-	st, err := os.Stat(path)
-	return err == nil && !st.IsDir() && st.Size() > 0
+	return setup.NonEmptyFileExists(path)
 }
 
 func openBrowser(url string) error {

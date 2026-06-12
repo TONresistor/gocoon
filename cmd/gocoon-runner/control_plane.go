@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TONresistor/gocoon/pkg/cocoon"
 	"github.com/TONresistor/gocoon/pkg/contracts/client"
 	"github.com/xssnick/tonutils-go/address"
 	"github.com/xssnick/tonutils-go/tvm/cell"
@@ -30,14 +29,12 @@ import (
 //	GET /stats                   HTML overview (debug)
 type ControlPlane struct {
 	port   int
-	cli    *cocoon.Client
+	engine *Engine
 	state  *RunnerState
 	logger *slog.Logger
 
-	// Broadcaster + CocoonWalletAddr are set by main.go after liteclient init;
-	// /request/* falls back to "client not initialized" if missing.
-	Broadcaster      cocoon.Broadcaster
-	CocoonWalletAddr *address.Address
+	// App, when set, mounts the /api/* onboarding and lifecycle endpoints.
+	App *AppAPI
 
 	server  *http.Server
 	mu      sync.Mutex
@@ -87,6 +84,16 @@ func (s *RunnerState) SetWalletBalance(b uint64) {
 	s.WalletBalance = b
 }
 
+// SetIdentity updates the engine identity exposed in /jsonstats when the
+// engine starts or stops.
+func (s *RunnerState) SetIdentity(rootAddress, ownerAddress string, enabled bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.RootAddress = rootAddress
+	s.OwnerAddress = ownerAddress
+	s.Enabled = enabled
+}
+
 // ProxyConnectionEntry mirrors the JSON shape the browser parses.
 type ProxyConnectionEntry struct {
 	Address        string `json:"address"`
@@ -129,8 +136,8 @@ type jsonStatsLocalConf struct {
 }
 
 // NewControlPlane returns a configured ControlPlane.
-func NewControlPlane(port int, cli *cocoon.Client, state *RunnerState, logger *slog.Logger) *ControlPlane {
-	return &ControlPlane{port: port, cli: cli, state: state, logger: logger}
+func NewControlPlane(port int, engine *Engine, state *RunnerState, logger *slog.Logger) *ControlPlane {
+	return &ControlPlane{port: port, engine: engine, state: state, logger: logger}
 }
 
 // Start begins serving on 127.0.0.1:<port>.
@@ -144,6 +151,9 @@ func (cp *ControlPlane) Start() error {
 	mux.HandleFunc("/v1/models", cp.handleModels)
 	mux.HandleFunc("/stats", cp.handleStats)
 	mux.HandleFunc("/", cp.handleIndex)
+	if cp.App != nil {
+		cp.App.routes(mux, cp.applyCORS)
+	}
 
 	cp.mu.Lock()
 	defer cp.mu.Unlock()
@@ -256,12 +266,14 @@ func (cp *ControlPlane) requestHandler(verb string) http.HandlerFunc {
 			fmt.Fprint(w, wrapShortAnswer("failed: invalid proxy address"))
 			return
 		}
-		if cp.Broadcaster == nil || cp.CocoonWalletAddr == nil {
+		broadcaster := cp.engine.Broadcaster()
+		walletAddr := cp.engine.WalletAddr()
+		if broadcaster == nil || walletAddr == nil {
 			fmt.Fprint(w, wrapShortAnswer("failed: client not initialized"))
 			return
 		}
 
-		body, err := cp.buildRequestBody(verb, r)
+		body, err := cp.buildRequestBody(verb, walletAddr, r)
 		if err != nil {
 			fmt.Fprintln(w, wrapShortAnswer("failed: "+err.Error()))
 			return
@@ -269,7 +281,7 @@ func (cp *ControlPlane) requestHandler(verb string) http.HandlerFunc {
 
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
-		bocHash, err := cp.Broadcaster.BroadcastExternal(ctx, clientSC, body)
+		bocHash, err := broadcaster.BroadcastExternal(ctx, clientSC, body)
 		if err != nil {
 			cp.logger.Warn("/request/"+verb+" broadcast failed", "err", err, "client_sc", proxyAddr)
 			fmt.Fprint(w, wrapShortAnswer("failed: "+err.Error()))
@@ -282,8 +294,7 @@ func (cp *ControlPlane) requestHandler(verb string) http.HandlerFunc {
 
 // buildRequestBody constructs the cocoon_client SC body for the given verb,
 // using the cocoon-wallet as excessesTo recipient.
-func (cp *ControlPlane) buildRequestBody(verb string, r *http.Request) (*cell.Cell, error) {
-	excesses := cp.CocoonWalletAddr
+func (cp *ControlPlane) buildRequestBody(verb string, excesses *address.Address, r *http.Request) (*cell.Cell, error) {
 	switch verb {
 	case "close":
 		return client.BuildOwnerRequestRefund(excesses)
