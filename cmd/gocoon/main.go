@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -26,8 +25,8 @@ import (
 	"github.com/TONresistor/gocoon/pkg/contracts/root"
 	cocoonwallet "github.com/TONresistor/gocoon/pkg/contracts/wallet"
 	"github.com/TONresistor/gocoon/pkg/resources"
+	"github.com/TONresistor/gocoon/pkg/setup"
 	"github.com/xssnick/tonutils-go/address"
-	"github.com/xssnick/tonutils-go/liteclient"
 	"github.com/xssnick/tonutils-go/tlb"
 	"github.com/xssnick/tonutils-go/ton"
 	"github.com/xssnick/tonutils-go/tvm/cell"
@@ -41,6 +40,10 @@ type commandEntry struct {
 // commands is the dispatch table. Initialized in init() to break the
 // cycle introduced by cmdHelp referencing commands.
 var commands map[string]commandEntry
+
+// desktopBuildDefault is set by the desktop build-tag file. It makes
+// renamed packaged binaries such as Cocoon.exe open the app by default.
+var desktopBuildDefault bool
 
 func init() {
 	commands = map[string]commandEntry{
@@ -57,12 +60,20 @@ func init() {
 		"wallet":  {cmdWallet, "Cocoon wallet generation and inspection"},
 		"chat":    {cmdChat, "Run a chat completion"},
 		"serve":   {cmdServe, "Start an OpenAI-compatible HTTP server"},
+		"ui":      {cmdUI, "Start a local wallet and chat UI"},
 		"doctor":  {cmdDoctor, "Validate config and connectivity"},
 	}
 }
 
 func main() {
 	if len(os.Args) < 2 {
+		if isDesktopExecutable() {
+			if err := cmdUI([]string{"--window"}); err != nil {
+				fmt.Fprintln(os.Stderr, "gocoon-desktop:", err)
+				os.Exit(1)
+			}
+			return
+		}
 		usage()
 		os.Exit(2)
 	}
@@ -85,6 +96,18 @@ func main() {
 	}
 }
 
+func isDesktopExecutable() bool {
+	if desktopBuildDefault {
+		return true
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	name := strings.ToLower(filepath.Base(self))
+	return strings.Contains(name, "desktop")
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "gocoon : COCOON client CLI")
 	fmt.Fprintln(os.Stderr)
@@ -94,7 +117,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "Commands:")
 	for _, name := range []string{
 		"version", "help", "status", "proxies", "root",
-		"models", "init", "config", "run", "channel", "wallet", "chat", "serve", "doctor",
+		"models", "init", "config", "run", "channel", "wallet", "chat", "serve", "ui", "doctor",
 	} {
 		c := commands[name]
 		fmt.Fprintf(os.Stderr, "  %-10s %s\n", name, c.summary)
@@ -133,6 +156,10 @@ func cmdHelp(args []string) error {
 	}
 	if args[0] == "root" {
 		printRootUsage(os.Stdout)
+		return nil
+	}
+	if args[0] == "ui" {
+		printUIUsage(os.Stdout)
 		return nil
 	}
 	if cmd, ok := commands[args[0]]; ok {
@@ -254,8 +281,8 @@ func cmdModels(args []string) error {
 
 const (
 	defaultRunnerURL             = "http://127.0.0.1:10000"
-	defaultMainnetRoot           = "EQCns7bYSp0igFvS1wpb5wsZjCKCV19MD5AVzI4EyxsnU73k"
-	recommendedCocoonFundingNano = uint64(20_000_000_000)
+	defaultMainnetRoot           = setup.MainnetRoot
+	recommendedCocoonFundingNano = setup.RecommendedFundingNano
 	canonicalMinClientStakeNano  = uint64(15_000_000_000)
 )
 
@@ -265,19 +292,7 @@ type storedWallet struct {
 	NodeAddress      string `json:"nodeAddress"`
 }
 
-type runnerConfigJSON struct {
-	IsTest            bool   `json:"is_test"`
-	IsTestnet         bool   `json:"is_testnet"`
-	HTTPPort          int    `json:"http_port"`
-	RPCPort           int    `json:"rpc_port,omitempty"`
-	ProxyConnections  int    `json:"proxy_connections"`
-	TonConfigFilename string `json:"ton_config_filename"`
-	OwnerAddress      string `json:"owner_address"`
-	RootContractAddr  string `json:"root_contract_address"`
-	NodeWalletKey     string `json:"node_wallet_key"`
-	MaxCoefficient    int    `json:"max_coefficient"`
-	MaxTokens         int    `json:"max_tokens"`
-}
+type runnerConfigJSON = setup.RunnerConfig
 
 type rootOutput struct {
 	RootAddress              string `json:"root_address"`
@@ -546,25 +561,11 @@ func cmdConfigGenerate(args []string) error {
 }
 
 func writeOutputFile(path string, data []byte, mode os.FileMode, force bool) error {
-	if err := preflightOutputFile(path, force); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, mode)
+	return setup.WriteOutputFile(path, data, mode, force)
 }
 
 func preflightOutputFile(path string, force bool) error {
-	if force {
-		return nil
-	}
-	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("%s already exists; pass --force to overwrite", path)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
+	return setup.PreflightOutputFile(path, force)
 }
 
 func printConfigUsage(out *os.File) {
@@ -613,9 +614,15 @@ func resolveRunnerPath(explicit string) (string, error) {
 	}
 	self, err := os.Executable()
 	if err == nil {
-		candidate := filepath.Join(filepath.Dir(self), "gocoon-runner")
-		if st, statErr := os.Stat(candidate); statErr == nil && !st.IsDir() {
-			return candidate, nil
+		names := []string{"gocoon-runner"}
+		if filepath.Ext(self) == ".exe" {
+			names = append([]string{"gocoon-runner.exe"}, names...)
+		}
+		for _, name := range names {
+			candidate := filepath.Join(filepath.Dir(self), name)
+			if st, statErr := os.Stat(candidate); statErr == nil && !st.IsDir() {
+				return candidate, nil
+			}
 		}
 	}
 	return "", errors.New("gocoon-runner not found in PATH or next to gocoon; pass --runner")
@@ -766,102 +773,22 @@ func fetchClientSCInfo(ctx context.Context, tonConfigPath, clientSCAddr string) 
 	if err != nil {
 		return nil, fmt.Errorf("channel info: parse client-sc: %w", err)
 	}
-	mc, err := api.CurrentMasterchainInfo(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("channel info: masterchain info: %w", err)
-	}
-	acc, err := api.GetAccount(ctx, mc, addr)
-	if err != nil {
-		return nil, fmt.Errorf("channel info: get account: %w", err)
-	}
-	out := &clientSCInfo{
-		Address:       clientSCAddr,
-		AccountStatus: "missing",
-		StateName:     "missing",
-		BalanceNano:   "0",
-		BalanceTON:    "0",
-		StakeNano:     "0",
-		StakeTON:      "0",
-	}
-	if acc == nil || acc.State == nil {
-		return out, nil
-	}
-	out.AccountStatus = fmt.Sprint(acc.State.Status)
-	if acc.Data == nil {
-		return out, nil
-	}
-	parsed, err := parseClientSCData(acc.Data)
+	info, err := setup.FetchChannelInfo(ctx, api, addr)
 	if err != nil {
 		return nil, err
 	}
-	out.State = parsed.State
-	out.StateName = clientStateName(parsed.State)
-	out.BalanceNano = parsed.Balance.String()
-	out.BalanceTON = formatNanoTON(parsed.Balance)
-	out.StakeNano = parsed.Stake.String()
-	out.StakeTON = formatNanoTON(parsed.Stake)
-	out.TokensUsed = parsed.TokensUsed
-	out.UnlockTs = parsed.UnlockTs
-	return out, nil
-}
-
-type parsedClientSCData struct {
-	State      uint8
-	Balance    *big.Int
-	Stake      *big.Int
-	TokensUsed uint64
-	UnlockTs   uint32
-}
-
-func parseClientSCData(data cellData) (*parsedClientSCData, error) {
-	s, err := data.BeginParse()
-	if err != nil {
-		return nil, fmt.Errorf("channel info: begin parse: %w", err)
-	}
-	state, err := s.LoadUInt(2)
-	if err != nil {
-		return nil, fmt.Errorf("channel info: parse state: %w", err)
-	}
-	balance, err := s.LoadBigCoins()
-	if err != nil {
-		return nil, fmt.Errorf("channel info: parse balance: %w", err)
-	}
-	stake, err := s.LoadBigCoins()
-	if err != nil {
-		return nil, fmt.Errorf("channel info: parse stake: %w", err)
-	}
-	tokensUsed, err := s.LoadUInt(64)
-	if err != nil {
-		return nil, fmt.Errorf("channel info: parse tokens_used: %w", err)
-	}
-	unlockTs, err := s.LoadUInt(32)
-	if err != nil {
-		return nil, fmt.Errorf("channel info: parse unlock_ts: %w", err)
-	}
-	return &parsedClientSCData{
-		State:      uint8(state),
-		Balance:    balance,
-		Stake:      stake,
-		TokensUsed: tokensUsed,
-		UnlockTs:   uint32(unlockTs),
+	return &clientSCInfo{
+		Address:       clientSCAddr,
+		AccountStatus: info.AccountStatus,
+		State:         info.State,
+		StateName:     info.StateName,
+		BalanceNano:   info.BalanceNano.String(),
+		BalanceTON:    formatNanoTON(info.BalanceNano),
+		StakeNano:     info.StakeNano.String(),
+		StakeTON:      formatNanoTON(info.StakeNano),
+		TokensUsed:    info.TokensUsed,
+		UnlockTs:      info.UnlockTs,
 	}, nil
-}
-
-type cellData interface {
-	BeginParse() (*cell.Slice, error)
-}
-
-func clientStateName(state uint8) string {
-	switch state {
-	case 0:
-		return "active"
-	case 1:
-		return "closing"
-	case 2:
-		return "closed"
-	default:
-		return "unknown"
-	}
 }
 
 func printClientSCInfo(out io.Writer, info *clientSCInfo) {
@@ -1105,10 +1032,7 @@ func cmdWalletWithdraw(args []string) error {
 	return nil
 }
 
-type walletInfo struct {
-	OwnerAddress string
-	NodeAddress  string
-}
+type walletInfo = setup.WalletInfo
 
 type walletWithdrawOutput struct {
 	WalletPath     string `json:"wallet_path,omitempty"`
@@ -1142,25 +1066,10 @@ type walletInfoOutput struct {
 	OnChainMinClientStakeTON  string `json:"on_chain_min_client_stake_ton,omitempty"`
 }
 
-type fundingStatus struct {
-	BalanceNano        *big.Int
-	MinClientStakeNano *big.Int
-}
+type fundingStatus = setup.FundingStatus
 
 func loadWalletInfo(path string) (*walletInfo, error) {
-	wallet, err := loadStoredWallet(path)
-	if err != nil {
-		return nil, err
-	}
-	nodeAddress := strings.TrimSpace(wallet.NodeAddress)
-	if nodeAddress == "" {
-		derived, err := deriveNodeAddressFromWallet(wallet)
-		if err != nil {
-			return nil, err
-		}
-		nodeAddress = derived
-	}
-	return &walletInfo{OwnerAddress: wallet.OwnerAddress, NodeAddress: nodeAddress}, nil
+	return setup.LoadWalletInfo(path)
 }
 
 func loadStoredWallet(path string) (storedWallet, error) {
@@ -1176,30 +1085,6 @@ func loadStoredWallet(path string) (storedWallet, error) {
 		return storedWallet{}, errors.New("wallet: JSON missing ownerAddress or nodeSecretBase64")
 	}
 	return wallet, nil
-}
-
-func deriveNodeAddressFromWallet(wallet storedWallet) (string, error) {
-	owner, err := address.ParseAddr(wallet.OwnerAddress)
-	if err != nil {
-		return "", fmt.Errorf("wallet: parse ownerAddress: %w", err)
-	}
-	seed, err := decodeNodeSeed(wallet.NodeSecretBase64)
-	if err != nil {
-		return "", err
-	}
-	code, _, err := cocoonwallet.LoadDefaultCode()
-	if err != nil {
-		return "", err
-	}
-	key := ed25519.NewKeyFromSeed(seed)
-	nodeAddress, err := cocoonwallet.DeriveAddress(cocoonwallet.Config{
-		PublicKey:    key.Public().(ed25519.PublicKey),
-		OwnerAddress: owner,
-	}, code)
-	if err != nil {
-		return "", fmt.Errorf("wallet: derive node address: %w", err)
-	}
-	return nodeAddress.String(), nil
 }
 
 func nodeWalletFromStored(wallet storedWallet) (*address.Address, *address.Address, ed25519.PrivateKey, *cell.Cell, error) {
@@ -1235,17 +1120,7 @@ func nodeWalletFromStored(wallet storedWallet) (*address.Address, *address.Addre
 }
 
 func decodeNodeSeed(s string) ([]byte, error) {
-	seed, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
-		seed, err = base64.URLEncoding.DecodeString(s)
-		if err != nil {
-			return nil, fmt.Errorf("wallet: nodeSecretBase64 not valid base64: %w", err)
-		}
-	}
-	if len(seed) != ed25519.SeedSize {
-		return nil, fmt.Errorf("wallet: nodeSecretBase64 decoded length %d, want %d", len(seed), ed25519.SeedSize)
-	}
-	return seed, nil
+	return setup.DecodeNodeSeed(s)
 }
 
 const walletWithdrawMode = uint8(128 + 32)
@@ -1450,42 +1325,11 @@ func resolveTONConfigPath(configPath, tonConfigPath string) (string, error) {
 }
 
 func fetchFundingStatus(ctx context.Context, tonConfigPath, nodeAddress string) (*fundingStatus, error) {
-	api, err := newTONAPI(tonConfigPath)
-	if err != nil {
-		return nil, err
-	}
-	addr, err := address.ParseAddr(nodeAddress)
-	if err != nil {
-		return nil, fmt.Errorf("wallet: parse node address: %w", err)
-	}
-	mc, err := api.CurrentMasterchainInfo(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("wallet: masterchain info: %w", err)
-	}
-	acc, err := api.GetAccount(ctx, mc, addr)
-	if err != nil {
-		return nil, fmt.Errorf("wallet: get account: %w", err)
-	}
-	bal := big.NewInt(0)
-	if acc != nil && acc.State != nil && acc.State.Balance.Nano() != nil {
-		bal = new(big.Int).Set(acc.State.Balance.Nano())
-	}
-	status := &fundingStatus{BalanceNano: bal}
-	rdr, err := root.NewReader(api, defaultMainnetRoot)
-	if err == nil {
-		if summary, err := rdr.GetSummary(ctx); err == nil && summary.MinClientStake != nil {
-			status.MinClientStakeNano = new(big.Int).Set(summary.MinClientStake)
-		}
-	}
-	return status, nil
+	return setup.FetchFundingStatus(ctx, tonConfigPath, nodeAddress)
 }
 
 func newTONAPI(tonConfigPath string) (ton.APIClientWrapped, error) {
-	pool := liteclient.NewConnectionPool()
-	if err := pool.AddConnectionsFromConfigFile(tonConfigPath); err != nil {
-		return nil, fmt.Errorf("liteclient: %w", err)
-	}
-	return ton.NewAPIClient(pool).WithRetryTimeout(3, 0*time.Second), nil
+	return setup.NewTONAPI(tonConfigPath)
 }
 
 func printWalletInfo(out io.Writer, info walletInfoOutput) {
@@ -1531,23 +1375,7 @@ func printWalletWithdraw(out io.Writer, info *walletWithdrawOutput) {
 }
 
 func formatNanoTON(n *big.Int) string {
-	if n == nil {
-		return "0"
-	}
-	sign := ""
-	v := new(big.Int).Set(n)
-	if v.Sign() < 0 {
-		sign = "-"
-		v.Abs(v)
-	}
-	div := big.NewInt(1_000_000_000)
-	whole, frac := new(big.Int).QuoRem(v, div, new(big.Int))
-	if frac.Sign() == 0 {
-		return sign + whole.String()
-	}
-	fracStr := fmt.Sprintf("%09s", frac.String())
-	fracStr = strings.TrimRight(fracStr, "0")
-	return sign + whole.String() + "." + fracStr
+	return setup.FormatNanoTON(n)
 }
 
 func printWalletUsage(out *os.File) {

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/TONresistor/gocoon/pkg/core"
+
 	"context"
 	"encoding/json"
 	"io"
@@ -21,11 +23,11 @@ func TestWrapShortAnswerByteExact(t *testing.T) {
 }
 
 func TestJSONStatsShape(t *testing.T) {
-	state := &RunnerState{
+	state := &core.RunnerState{
 		Enabled:          true,
 		GitCommit:        "abcdef",
-		RootAddress:      MainnetRoot,
-		OwnerAddress:     MainnetRoot,
+		RootAddress:      core.MainnetRoot,
+		OwnerAddress:     core.MainnetRoot,
 		CheckImageHashes: false,
 		WalletBalance:    1_500_000_000,
 		TONLastSyncedAt:  1_700_000_000,
@@ -52,7 +54,7 @@ func TestJSONStatsShape(t *testing.T) {
 	if got.Status.GitCommit != "abcdef" {
 		t.Errorf("git_commit: %s", got.Status.GitCommit)
 	}
-	if got.LocalConf.RootAddress != MainnetRoot {
+	if got.LocalConf.RootAddress != core.MainnetRoot {
 		t.Errorf("root: %s", got.LocalConf.RootAddress)
 	}
 	// arrays must be present (not nil), even if empty.
@@ -65,7 +67,7 @@ func TestJSONStatsShape(t *testing.T) {
 }
 
 func TestRequestEndpointMissingProxyParam(t *testing.T) {
-	state := &RunnerState{}
+	state := &core.RunnerState{}
 	cp := NewControlPlane(0, nil, state, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	h := cp.requestHandler("close")
 
@@ -83,7 +85,7 @@ func TestRequestEndpointMissingProxyParam(t *testing.T) {
 }
 
 func TestRequestEndpointInvalidProxyAddr(t *testing.T) {
-	state := &RunnerState{}
+	state := &core.RunnerState{}
 	cp := NewControlPlane(0, nil, state, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	h := cp.requestHandler("close")
 
@@ -97,7 +99,7 @@ func TestRequestEndpointInvalidProxyAddr(t *testing.T) {
 }
 
 func TestRequestEndpointUninitialized(t *testing.T) {
-	state := &RunnerState{}
+	state := &core.RunnerState{}
 	cp := NewControlPlane(0, nil, state, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	// Broadcaster nil and CocoonWalletAddr nil → "client not initialized".
 	h := cp.requestHandler("close")
@@ -113,7 +115,7 @@ func TestRequestEndpointUninitialized(t *testing.T) {
 }
 
 func TestControlPlaneStartShutdown(t *testing.T) {
-	state := &RunnerState{}
+	state := &core.RunnerState{}
 	cp := NewControlPlane(0, nil, state, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err := cp.Start(); err != nil {
 		t.Fatal(err)

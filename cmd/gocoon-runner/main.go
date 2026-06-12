@@ -1,12 +1,19 @@
 // Command gocoon-runner is the browser-compat runner binary, drop-in
 // replacement for upstream cocoon-runner.
+//
+// Modes:
+//
+//	gocoon-runner --config client-config.json   classic: engine starts now
+//	gocoon-runner --data-dir <dir>              app: HTTP comes up first; the
+//	                                            /api/* endpoints handle wallet
+//	                                            onboarding and engine start
 package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -14,22 +21,21 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/TONresistor/gocoon/pkg/core"
 	"github.com/TONresistor/gocoon/pkg/cocoon"
-	"github.com/TONresistor/gocoon/pkg/router"
-	"github.com/TONresistor/gocoon/pkg/store"
-	storebbolt "github.com/TONresistor/gocoon/pkg/store/bbolt"
-	memstore "github.com/TONresistor/gocoon/pkg/store/memory"
-	"github.com/xssnick/tonutils-go/address"
+	"github.com/TONresistor/gocoon/pkg/setup"
 )
 
 func main() {
 	var (
 		configPath  string
+		dataDir     string
 		verbosity   int
 		showVersion bool
 	)
 	flag.StringVar(&configPath, "config", "", "path to client-config.json")
 	flag.StringVar(&configPath, "c", "", "shorthand for --config")
+	flag.StringVar(&dataDir, "data-dir", "", "Cocoon data directory (enables /api onboarding endpoints)")
 	flag.IntVar(&verbosity, "v", 1, "verbosity (0..3)")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	preprocessConcatVFlag()
@@ -39,13 +45,14 @@ func main() {
 		fmt.Printf("gocoon-runner %s (%s, built %s)\n", cocoon.Version, cocoon.Commit, cocoon.BuildDate)
 		return
 	}
-	if configPath == "" {
-		fmt.Fprintln(os.Stderr, "gocoon-runner: --config is required")
+	if configPath == "" && dataDir == "" {
+		fmt.Fprintln(os.Stderr, "gocoon-runner: --config or --data-dir is required")
 		os.Exit(2)
 	}
 
-	logger := newLogger(verbosity)
-	if err := run(configPath, logger); err != nil {
+	logs := newLogRing(1000)
+	logger := newLogger(verbosity, logs)
+	if err := run(configPath, dataDir, logs, logger); err != nil {
 		logger.Error("fatal", "err", err)
 		os.Exit(1)
 	}
@@ -76,128 +83,74 @@ func preprocessConcatVFlag() {
 	os.Args = out
 }
 
-func newLogger(verbosity int) *slog.Logger {
+func newLogger(verbosity int, logs *logRing) *slog.Logger {
 	level := slog.LevelInfo
 	switch {
 	case verbosity <= 0:
 		level = slog.LevelError
 	case verbosity == 1:
 		level = slog.LevelInfo
-	case verbosity == 2:
-		level = slog.LevelDebug
-	case verbosity >= 3:
+	case verbosity >= 2:
 		level = slog.LevelDebug
 	}
-	h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+	var out io.Writer = os.Stderr
+	if logs != nil {
+		out = io.MultiWriter(os.Stderr, logs)
+	}
+	h := slog.NewTextHandler(out, &slog.HandlerOptions{Level: level})
 	return slog.New(h)
 }
 
-// openStore returns a persistent bbolt store rooted at $GOCOON_DATA_DIR (set
-// by the browser) or $HOME/.local/share/gocoon for standalone runs.
-// Falls back to in-memory if neither path is writable.
-func openStore(logger *slog.Logger) store.Store {
-	dir := os.Getenv("GOCOON_DATA_DIR")
-	if dir == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			dir = filepath.Join(home, ".local", "share", "gocoon")
+func run(configPath, dataDir string, logs *logRing, logger *slog.Logger) error {
+	appMode := dataDir != ""
+	if appMode && configPath == "" {
+		configPath = setup.DefaultPaths(dataDir).ConfigPath
+	}
+	if !appMode {
+		// Classic mode: store lives next to GOCOON_DATA_DIR or user dir, and
+		// the data dir for /api purposes is the config's directory.
+		dataDir = os.Getenv("GOCOON_DATA_DIR")
+		if dataDir == "" {
+			dataDir = filepath.Dir(configPath)
 		}
 	}
-	if dir != "" {
-		if err := os.MkdirAll(dir, 0o700); err == nil {
-			path := filepath.Join(dir, "runner-state.bolt")
-			if s, err := storebbolt.Open(path); err == nil {
-				logger.Info("store: bbolt", "path", path)
-				return s
-			}
+
+	// Port: from config when present, default 10000 before onboarding.
+	port := 10000
+	configExists := setup.FileExists(configPath)
+	if configExists {
+		cfg, err := core.LoadClientConfig(configPath)
+		if err != nil {
+			return err
 		}
-	}
-	logger.Warn("store: falling back to in-memory")
-	return memstore.New()
-}
-
-func run(configPath string, logger *slog.Logger) error {
-	cfg, err := LoadClientConfig(configPath)
-	if err != nil {
-		return err
+		port = cfg.HTTPPort
+	} else if !appMode {
+		return fmt.Errorf("config: read %s: no such file", configPath)
 	}
 
-	keyBytes, err := cfg.NodeKeyBytes()
-	if err != nil {
-		return err
-	}
-	nodeKey := ed25519.NewKeyFromSeed(keyBytes)
-
-	owner, err := address.ParseAddr(cfg.OwnerAddress)
-	if err != nil {
-		return err
-	}
-	rootAddr, err := address.ParseAddr(cfg.RootContractAddr)
-	if err != nil {
-		return err
-	}
-
-	br, walletAddr, api, err := buildLiteclientStack(cfg, configPath, logger)
-	if err != nil {
-		logger.Warn("liteclient init failed (broadcaster offline)", "err", err)
-	} else {
-		// Probe chain access early, surface failure in logs.
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		if err := ensureChainAccess(ctx, api); err != nil {
-			logger.Warn("liteclient probe failed", "err", err)
-		} else {
-			logger.Info("liteclient: ready", "wallet", walletAddr.String())
-		}
-		cancel()
-	}
-
-	st := openStore(logger)
-
-	// Dial proxies directly with full PoW + TLS. No separate router process
-	// is needed for the Go runner path.
-	clientCfg := cocoon.Config{
-		OwnerAddress:        owner,
-		NodeKey:             nodeKey,
-		RootAddress:         rootAddr,
-		LiteClientConfig:    cfg.ResolveTONConfig(configPath),
-		Store:               st,
-		Router:              &router.DefaultDialer{ClientKey: nodeKey},
-		Logger:              logger,
-		CocoonWalletAddress: walletAddr,
-		SecretString:        cfg.SecretString,
-	}
-	if br != nil {
-		clientCfg.Broadcaster = br
-	}
-
-	cli, err := cocoon.New(context.Background(), clientCfg)
-	if err != nil {
-		return err
-	}
-	defer cli.Close()
-
-	state := &RunnerState{
-		Enabled:          true,
+	state := &core.RunnerState{
 		GitCommit:        cocoon.Commit,
-		RootAddress:      cfg.RootContractAddr,
-		OwnerAddress:     cfg.OwnerAddress,
 		CheckImageHashes: false,
-		TONLastSyncedAt:  time.Now().Unix(),
 	}
-	cp := NewControlPlane(cfg.HTTPPort, cli, state, logger)
-	cp.Broadcaster = br
-	if walletAddr != nil {
-		cp.CocoonWalletAddr = walletAddr
-	}
+	engine := core.NewEngine(dataDir, state, logger)
+	defer engine.Stop()
+
+	cp := NewControlPlane(port, engine, state, logger)
+	cp.App = NewAppAPI(dataDir, port, engine, state, logs, logger)
 	if err := cp.Start(); err != nil {
 		return err
 	}
 
-	// Background discovery updates wallet/root state and publishes a proxy
-	// entry only after a live session is actually ready.
-	discCtx, discCancel := context.WithCancel(context.Background())
-	defer discCancel()
-	if api != nil && walletAddr != nil {
-		go runDiscovery(discCtx, cli, api, walletAddr, state, logger)
+	if configExists {
+		if err := engine.Start(configPath); err != nil {
+			if !appMode {
+				return err
+			}
+			// App mode keeps serving so the UI can show the error and retry.
+			logger.Error("engine start failed", "err", err)
+		}
+	} else {
+		logger.Info("no client-config.json yet; waiting for onboarding via /api")
 	}
 
 	// Block on signal.

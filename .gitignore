@@ -22,3 +22,6 @@ client-config.json
 # Editor / agent local state
 .obsidian/
 .claude/
+
+# Stray local builds (go build ./... drops binaries in the repo root)
+/*.exe

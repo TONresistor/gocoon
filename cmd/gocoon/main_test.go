@@ -9,7 +9,7 @@ import (
 )
 
 func TestKnownCommandsDispatchable(t *testing.T) {
-	expected := []string{"version", "help", "status", "proxies", "root", "models", "init", "config", "run", "channel", "wallet", "chat", "serve", "doctor"}
+	expected := []string{"version", "help", "status", "proxies", "root", "models", "init", "config", "run", "channel", "wallet", "chat", "serve", "ui", "doctor"}
 	for _, name := range expected {
 		if _, ok := commands[name]; !ok {
 			t.Errorf("missing command: %s", name)

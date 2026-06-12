@@ -4,6 +4,8 @@ Pure-Go COCOON client. Run decentralized AI inference on TON without Telegram's
 C++ runner build chain.
 
 - Standalone CLI with an **OpenAI-compatible local HTTP API**
+- Built-in local **wallet + chat UI** (`gocoon ui`) and desktop app
+  (`gocoon-desktop`)
 - OpenAI **function calling** support (`tools` array, `tool_calls` response)
 - Full on-chain payment flow: stake → chat → close → withdraw
 - Static cross-platform binaries (linux / darwin / windows × amd64 / arm64,
@@ -22,10 +24,33 @@ make build
 export PATH="$PWD/dist:$PATH"
 ```
 
-`make build-cross` and `make build-android` produce release-grade static
+`make build-desktop` produces a host desktop app binary (`gocoon-desktop.exe`
+on Windows, `gocoon-desktop` on macOS/Linux) plus `gocoon-runner`.
+`make build-cross` and `make build-android` produce release-grade static CLI
 binaries for every supported target.
 
 ## Quick Start
+
+For the local UI:
+
+```bash
+gocoon ui --dir ./gocoon-data
+```
+
+The UI creates the wallet/config bundle, shows the recovery phrase and full
+backup JSON once, shows the funding address, starts the local runner, lists
+models once a proxy session is ready, and provides a simple chat screen.
+
+For a standalone desktop window instead of a browser tab:
+
+```bash
+gocoon-desktop
+```
+
+Keep `gocoon-runner` next to `gocoon-desktop`; the desktop app starts it when
+you press **Connect to Cocoon**.
+
+For CLI-only setup:
 
 ```bash
 gocoon init --dir ./gocoon-data
@@ -69,7 +94,7 @@ gocoon wallet withdraw \
 
 | Path                | Role                                                     |
 | ------------------- | -------------------------------------------------------- |
-| `cmd/gocoon`        | Standalone CLI                                           |
+| `cmd/gocoon`        | Standalone CLI and local web UI                          |
 | `cmd/gocoon-runner` | Local runner, HTTP control plane on `127.0.0.1:10000`    |
 | `pkg/cocoon`        | Client library: sessions, inference, payments, discovery |
 | `pkg/contracts`     | COCOON root / client / wallet contract helpers           |
