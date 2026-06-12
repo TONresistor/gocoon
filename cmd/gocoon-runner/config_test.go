@@ -120,8 +120,10 @@ func TestConfigLoadFromFile(t *testing.T) {
 
 func TestResolveTONConfig(t *testing.T) {
 	c := ClientConfig{TonConfigFilename: "global.config.json"}
-	got := c.ResolveTONConfig("/tmp/run/abc/client-config.json")
-	if got != "/tmp/run/abc/global.config.json" {
+	configPath := filepath.Join(string(filepath.Separator), "tmp", "run", "abc", "client-config.json")
+	want := filepath.Join(string(filepath.Separator), "tmp", "run", "abc", "global.config.json")
+	got := c.ResolveTONConfig(configPath)
+	if got != want {
 		t.Errorf("got %s", got)
 	}
 }

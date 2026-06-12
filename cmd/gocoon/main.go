@@ -42,6 +42,10 @@ type commandEntry struct {
 // cycle introduced by cmdHelp referencing commands.
 var commands map[string]commandEntry
 
+// desktopBuildDefault is set by the desktop build-tag file. It makes
+// renamed packaged binaries such as Cocoon.exe open the app by default.
+var desktopBuildDefault bool
+
 func init() {
 	commands = map[string]commandEntry{
 		"version": {cmdVersion, "Print version"},
@@ -57,12 +61,20 @@ func init() {
 		"wallet":  {cmdWallet, "Cocoon wallet generation and inspection"},
 		"chat":    {cmdChat, "Run a chat completion"},
 		"serve":   {cmdServe, "Start an OpenAI-compatible HTTP server"},
+		"ui":      {cmdUI, "Start a local wallet and chat UI"},
 		"doctor":  {cmdDoctor, "Validate config and connectivity"},
 	}
 }
 
 func main() {
 	if len(os.Args) < 2 {
+		if isDesktopExecutable() {
+			if err := cmdUI([]string{"--window"}); err != nil {
+				fmt.Fprintln(os.Stderr, "gocoon-desktop:", err)
+				os.Exit(1)
+			}
+			return
+		}
 		usage()
 		os.Exit(2)
 	}
@@ -85,6 +97,18 @@ func main() {
 	}
 }
 
+func isDesktopExecutable() bool {
+	if desktopBuildDefault {
+		return true
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	name := strings.ToLower(filepath.Base(self))
+	return strings.Contains(name, "desktop")
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "gocoon : COCOON client CLI")
 	fmt.Fprintln(os.Stderr)
@@ -94,7 +118,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "Commands:")
 	for _, name := range []string{
 		"version", "help", "status", "proxies", "root",
-		"models", "init", "config", "run", "channel", "wallet", "chat", "serve", "doctor",
+		"models", "init", "config", "run", "channel", "wallet", "chat", "serve", "ui", "doctor",
 	} {
 		c := commands[name]
 		fmt.Fprintf(os.Stderr, "  %-10s %s\n", name, c.summary)
@@ -133,6 +157,10 @@ func cmdHelp(args []string) error {
 	}
 	if args[0] == "root" {
 		printRootUsage(os.Stdout)
+		return nil
+	}
+	if args[0] == "ui" {
+		printUIUsage(os.Stdout)
 		return nil
 	}
 	if cmd, ok := commands[args[0]]; ok {
@@ -613,9 +641,15 @@ func resolveRunnerPath(explicit string) (string, error) {
 	}
 	self, err := os.Executable()
 	if err == nil {
-		candidate := filepath.Join(filepath.Dir(self), "gocoon-runner")
-		if st, statErr := os.Stat(candidate); statErr == nil && !st.IsDir() {
-			return candidate, nil
+		names := []string{"gocoon-runner"}
+		if filepath.Ext(self) == ".exe" {
+			names = append([]string{"gocoon-runner.exe"}, names...)
+		}
+		for _, name := range names {
+			candidate := filepath.Join(filepath.Dir(self), name)
+			if st, statErr := os.Stat(candidate); statErr == nil && !st.IsDir() {
+				return candidate, nil
+			}
 		}
 	}
 	return "", errors.New("gocoon-runner not found in PATH or next to gocoon; pass --runner")

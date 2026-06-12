@@ -31,6 +31,27 @@ gocoon serve
 
 By default the CLI talks to the local runner at `http://127.0.0.1:10000`.
 
+## Local UI
+
+```bash
+gocoon ui --dir ./gocoon-data [--runner ./gocoon-runner] [--addr 127.0.0.1:17770]
+gocoon ui --window --dir ./gocoon-data
+```
+
+The UI serves a local browser app. It can create the Cocoon wallet/config
+bundle, show the recovery phrase and full backup JSON once, show the funding
+address and on-chain balance, start/stop the local runner, list models, and
+send chat completions through the runner.
+
+For a desktop binary, build with the `desktop` tag or use:
+
+```bash
+make build-desktop
+```
+
+The produced `gocoon-desktop` executable opens the same UI in a native app
+window. On Windows the build uses WebView2 and hides the console window.
+
 ## Channel
 
 ```bash

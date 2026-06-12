@@ -1,4 +1,4 @@
-.PHONY: build build-cross build-android test test-router lint vet clean tidy install-browser
+.PHONY: build build-desktop build-cross build-android test test-router lint vet clean tidy install-browser
 
 GO ?= go
 GOFLAGS ?= -trimpath
@@ -6,6 +6,13 @@ LDFLAGS ?= -s -w
 BUILD_DIR ?= dist
 DESKTOP_TARGETS ?= linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
 ANDROID_TARGETS ?= android/arm64
+HOST_GOOS := $(shell $(GO) env GOOS)
+DESKTOP_EXT :=
+DESKTOP_LDFLAGS = $(LDFLAGS)
+ifeq ($(HOST_GOOS),windows)
+DESKTOP_EXT := .exe
+DESKTOP_LDFLAGS = -H windowsgui $(LDFLAGS)
+endif
 
 # Versioning baked at build time
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -19,6 +26,11 @@ build:
 	mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/gocoon          ./cmd/gocoon
 	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/gocoon-runner   ./cmd/gocoon-runner
+
+build-desktop:
+	mkdir -p $(BUILD_DIR)
+	$(GO) build $(GOFLAGS) -tags desktop -ldflags="$(DESKTOP_LDFLAGS)" -o $(BUILD_DIR)/gocoon-desktop$(DESKTOP_EXT) ./cmd/gocoon
+	$(GO) build $(GOFLAGS) -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/gocoon-runner$(DESKTOP_EXT) ./cmd/gocoon-runner
 
 build-cross:
 	@set -e; for target in $(DESKTOP_TARGETS); do \
