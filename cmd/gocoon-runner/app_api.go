@@ -15,6 +15,7 @@ import (
 
 	qrcode "github.com/skip2/go-qrcode"
 
+	"github.com/TONresistor/gocoon/pkg/core"
 	"github.com/TONresistor/gocoon/pkg/cocoon"
 	"github.com/TONresistor/gocoon/pkg/setup"
 )
@@ -32,8 +33,8 @@ import (
 //	GET  /api/logs           recent runner log lines
 type AppAPI struct {
 	paths  setup.Paths
-	engine *Engine
-	state  *RunnerState
+	engine *core.Engine
+	state  *core.RunnerState
 	logger *slog.Logger
 	logs   *logRing
 	chats  *ChatStore
@@ -57,7 +58,7 @@ const (
 )
 
 // NewAppAPI wires the app endpoints for a data directory.
-func NewAppAPI(dataDir string, port int, engine *Engine, state *RunnerState, logs *logRing, logger *slog.Logger) *AppAPI {
+func NewAppAPI(dataDir string, port int, engine *core.Engine, state *core.RunnerState, logs *logRing, logger *slog.Logger) *AppAPI {
 	return &AppAPI{
 		paths:  setup.DefaultPaths(dataDir),
 		engine: engine,
@@ -242,12 +243,9 @@ func (a *AppAPI) fillChannel(_ context.Context, wallet *appWalletState) {
 // onboarding completes we poll TON directly (cached).
 func (a *AppAPI) fillBalance(ctx context.Context, wallet *appWalletState) {
 	if a.engine.Running() {
-		a.state.mu.RLock()
-		balance := a.state.WalletBalance
-		synced := a.state.TONLastSyncedAt
-		a.state.mu.RUnlock()
-		if synced > 0 {
-			setWalletBalance(wallet, new(big.Int).SetUint64(balance), "engine")
+		snap := a.state.Snapshot()
+		if snap.TONLastSyncedAt > 0 {
+			setWalletBalance(wallet, new(big.Int).SetUint64(snap.WalletBalance), "engine")
 			return
 		}
 	}

@@ -8,14 +8,16 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/TONresistor/gocoon/pkg/core"
 )
 
 func newTestAppAPI(t *testing.T) *AppAPI {
 	t.Helper()
 	dir := t.TempDir()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	state := &RunnerState{}
-	engine := NewEngine(dir, state, logger)
+	state := &core.RunnerState{}
+	engine := core.NewEngine(dir, state, logger)
 	return NewAppAPI(dir, 10999, engine, state, newLogRing(10), logger)
 }
 

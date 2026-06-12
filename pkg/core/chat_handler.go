@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -14,25 +15,42 @@ import (
 	"github.com/TONresistor/gocoon/pkg/cocoon"
 )
 
-// handleChatCompletions implements an OpenAI-compatible chat passthrough.
-// Response shapes, picked from the inbound body:
+// UsageInfo is the parsed usage block of a completed request, delivered to
+// OpenAIProxy.OnUsage for metering.
+type UsageInfo struct {
+	Model            string
+	PromptTokens     int64
+	CompletionTokens int64
+	TotalTokens      int64
+	// TotalCostNano is the proxy-reported cost in nanoTON (empty if absent).
+	TotalCostNano string
+}
+
+// OpenAIProxy serves OpenAI-compatible endpoints backed by a cocoon Engine.
+// Shared by the local runner control plane and the public gateway.
+//
+// Response shapes for /v1/chat/completions, picked from the inbound body:
 //   - `tools:[…]`  → request/response are translated; one JSON document
 //   - `stream:true` → SSE (text/event-stream). When the upstream proxy
-//     streams (UpstreamStream enabled), chunks pass through as they arrive;
-//     otherwise the complete answer is converted into a single SSE delta, so
-//     UI streaming code works either way.
+//     streams (GOCOON_UPSTREAM_STREAM=1), chunks pass through as they
+//     arrive; otherwise the complete answer is converted into a single SSE
+//     delta, so UI streaming code works either way. (Verified live
+//     2026-06-12: the network proxy currently delivers EMPTY payload chunks
+//     for stream:true, so conversion stays the default.)
 //   - otherwise    → upstream chunks are collected; one JSON document
-//
-// Upstream streaming stays gated behind GOCOON_UPSTREAM_STREAM=1: verified
-// against the live network on 2026-06-12 — the proxy completes stream:true
-// requests but every payload chunk arrives EMPTY (the worker's SSE bytes
-// never reach the client), so the conversion fallback is the default until
-// upstream fixes proxy-side streaming.
-//
-// CORS preflight (OPTIONS) returns 200 with permissive headers so the
-// browser-side fetch passes.
-func (cp *ControlPlane) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
-	cp.applyCORS(w)
+type OpenAIProxy struct {
+	Engine *Engine
+	Logger *slog.Logger
+	// OnUsage, when set, is called after every completed request.
+	OnUsage func(u UsageInfo)
+	// MaxTokens / MaxCoefficient cap every query (0 = engine defaults).
+	MaxTokens      int
+	MaxCoefficient int
+}
+
+// HandleChatCompletions implements POST /v1/chat/completions.
+func (p *OpenAIProxy) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	ApplyCORS(w)
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -42,15 +60,15 @@ func (cp *ControlPlane) handleChatCompletions(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	sess, err := cp.pickSession()
+	sess, err := p.pickSession()
 	if err != nil {
-		writeJSONError(w, http.StatusServiceUnavailable, err.Error())
+		WriteJSONError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8*1024*1024))
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "body read: "+err.Error())
+		WriteJSONError(w, http.StatusBadRequest, "body read: "+err.Error())
 		return
 	}
 
@@ -59,15 +77,15 @@ func (cp *ControlPlane) handleChatCompletions(w http.ResponseWriter, r *http.Req
 		Model string `json:"model"`
 	}
 	_ = json.Unmarshal(body, &probe)
-	model, err := cp.resolveModel(r.Context(), sess, probe.Model)
+	model, err := p.resolveModel(r.Context(), sess, probe.Model)
 	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, err.Error())
+		WriteJSONError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	if model != probe.Model {
 		body, err = rewriteJSONModel(body, model)
 		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, "model rewrite: "+err.Error())
+			WriteJSONError(w, http.StatusBadRequest, "model rewrite: "+err.Error())
 			return
 		}
 	}
@@ -80,7 +98,7 @@ func (cp *ControlPlane) handleChatCompletions(w http.ResponseWriter, r *http.Req
 	case hadTools:
 		body, err = translateRequestBody(body)
 		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, "tools translate: "+err.Error())
+			WriteJSONError(w, http.StatusBadRequest, "tools translate: "+err.Error())
 			return
 		}
 	case upstreamStream:
@@ -88,7 +106,7 @@ func (cp *ControlPlane) handleChatCompletions(w http.ResponseWriter, r *http.Req
 	default:
 		body, err = forceNonStream(body)
 		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, "force non-stream: "+err.Error())
+			WriteJSONError(w, http.StatusBadRequest, "force non-stream: "+err.Error())
 			return
 		}
 	}
@@ -100,24 +118,69 @@ func (cp *ControlPlane) handleChatCompletions(w http.ResponseWriter, r *http.Req
 		Headers: map[string]string{
 			"Content-Type": r.Header.Get("Content-Type"),
 		},
-		Timeout: 5 * time.Minute,
+		Timeout:        5 * time.Minute,
+		MaxTokens:      p.MaxTokens,
+		MaxCoefficient: p.MaxCoefficient,
 	}
 	stream, err := sess.RunQuery(r.Context(), q)
 	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, "RunQuery: "+err.Error())
+		WriteJSONError(w, http.StatusBadGateway, "RunQuery: "+err.Error())
 		return
 	}
 
 	switch {
 	case hadTools:
-		cp.collectTranslateRespond(w, stream)
+		p.collectTranslateRespond(w, model, stream)
 	case upstreamStream:
-		cp.streamPassthrough(w, stream)
+		p.streamPassthrough(w, model, stream)
 	case wantStream:
-		cp.collectRespondAsSSE(w, stream)
+		p.collectRespondAsSSE(w, model, stream)
 	default:
-		cp.collectAndRespond(w, stream)
+		p.collectAndRespond(w, model, stream)
 	}
+}
+
+// HandleModels implements GET /v1/models.
+func (p *OpenAIProxy) HandleModels(w http.ResponseWriter, r *http.Request) {
+	ApplyCORS(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	sess, err := p.pickSession()
+	if err != nil {
+		WriteJSONError(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	models, err := sess.WorkerTypes(r.Context())
+	if err != nil {
+		WriteJSONError(w, http.StatusBadGateway, "models: "+err.Error())
+		return
+	}
+	data := make([]any, 0, len(models))
+	for _, model := range models {
+		workers := make([]any, 0, len(model.Workers))
+		for _, worker := range model.Workers {
+			workers = append(workers, map[string]any{
+				"coefficient":          worker.Coefficient,
+				"running_requests":     worker.ActiveRequests,
+				"max_running_requests": worker.MaxActiveRequests,
+			})
+		}
+		data = append(data, map[string]any{
+			"id":       model.Name,
+			"object":   "model",
+			"created":  0,
+			"owned_by": "?",
+			"workers":  workers,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"object": "list", "data": data})
 }
 
 // forceNonStream rewrites the body to set "stream": false.
@@ -141,8 +204,7 @@ func requestWantsStream(body []byte) bool {
 	return probe.Stream
 }
 
-// upstreamStreamEnabled gates real proxy-side streaming until it is verified
-// against the live network.
+// upstreamStreamEnabled gates real proxy-side streaming; see OpenAIProxy doc.
 func upstreamStreamEnabled() bool {
 	switch os.Getenv("GOCOON_UPSTREAM_STREAM") {
 	case "1", "true", "yes", "on":
@@ -152,8 +214,8 @@ func upstreamStreamEnabled() bool {
 }
 
 // pickSession returns the first Ready session, or an error if none.
-func (cp *ControlPlane) pickSession() (*cocoon.Session, error) {
-	cli := cp.engine.Client()
+func (p *OpenAIProxy) pickSession() (*cocoon.Session, error) {
+	cli := p.Engine.Client()
 	if cli == nil {
 		return nil, errors.New("client not initialized")
 	}
@@ -165,7 +227,7 @@ func (cp *ControlPlane) pickSession() (*cocoon.Session, error) {
 	return nil, errors.New("no ready proxy session yet")
 }
 
-func (cp *ControlPlane) resolveModel(ctx context.Context, sess *cocoon.Session, requested string) (string, error) {
+func (p *OpenAIProxy) resolveModel(ctx context.Context, sess *cocoon.Session, requested string) (string, error) {
 	models, err := sess.WorkerTypes(ctx)
 	if err != nil {
 		return "", fmt.Errorf("models: %w", err)
@@ -200,13 +262,49 @@ func rewriteJSONModel(body []byte, model string) ([]byte, error) {
 	return json.Marshal(obj)
 }
 
-// collectAndRespond collects all chunks into a single JSON response.
-func (cp *ControlPlane) collectAndRespond(w http.ResponseWriter, stream <-chan cocoon.Chunk) {
-	buf, lastErr := collectChunks(stream)
-	if lastErr != nil && len(buf) == 0 {
-		writeJSONError(w, http.StatusBadGateway, lastErr.Error())
+// reportUsage parses the usage block of a complete chat.completion document
+// and forwards it to OnUsage.
+func (p *OpenAIProxy) reportUsage(model string, completion []byte) {
+	if p.OnUsage == nil {
 		return
 	}
+	var doc struct {
+		Usage struct {
+			PromptTokens     int64           `json:"prompt_tokens"`
+			CompletionTokens int64           `json:"completion_tokens"`
+			TotalTokens      int64           `json:"total_tokens"`
+			TotalCost        json.RawMessage `json:"total_cost"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(completion, &doc); err != nil {
+		return
+	}
+	u := UsageInfo{
+		Model:            model,
+		PromptTokens:     doc.Usage.PromptTokens,
+		CompletionTokens: doc.Usage.CompletionTokens,
+		TotalTokens:      doc.Usage.TotalTokens,
+	}
+	if u.TotalTokens == 0 {
+		u.TotalTokens = u.PromptTokens + u.CompletionTokens
+	}
+	if len(doc.Usage.TotalCost) > 0 {
+		u.TotalCostNano = string(bytes.Trim(doc.Usage.TotalCost, `"`))
+	}
+	if u.TotalTokens == 0 && u.TotalCostNano == "" {
+		return
+	}
+	p.OnUsage(u)
+}
+
+// collectAndRespond collects all chunks into a single JSON response.
+func (p *OpenAIProxy) collectAndRespond(w http.ResponseWriter, model string, stream <-chan cocoon.Chunk) {
+	buf, lastErr := collectChunks(stream)
+	if lastErr != nil && len(buf) == 0 {
+		WriteJSONError(w, http.StatusBadGateway, lastErr.Error())
+		return
+	}
+	p.reportUsage(model, buf)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(buf)
@@ -215,16 +313,17 @@ func (cp *ControlPlane) collectAndRespond(w http.ResponseWriter, stream <-chan c
 // collectTranslateRespond collects the upstream response, then runs it
 // through translateResponseBody so any <tool_call> blocks become an
 // OpenAI-shape `tool_calls` array.
-func (cp *ControlPlane) collectTranslateRespond(w http.ResponseWriter, stream <-chan cocoon.Chunk) {
+func (p *OpenAIProxy) collectTranslateRespond(w http.ResponseWriter, model string, stream <-chan cocoon.Chunk) {
 	buf, lastErr := collectChunks(stream)
 	// Translate path requires a complete OpenAI Chat Completions JSON to
 	// produce a valid `tool_calls` array. Any upstream error invalidates
 	// the buffer, so refuse rather than risk delivering corrupt output.
 	if lastErr != nil {
-		writeJSONError(w, http.StatusBadGateway, lastErr.Error())
+		WriteJSONError(w, http.StatusBadGateway, lastErr.Error())
 		return
 	}
 	out, _ := translateResponseBody(buf)
+	p.reportUsage(model, out)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(out)
@@ -242,17 +341,15 @@ func collectChunks(stream <-chan cocoon.Chunk) ([]byte, error) {
 	return buf, lastErr
 }
 
-// streamPassthrough forwards upstream bytes as they arrive. The worker
-// (vllm/sglang) already emits SSE frames for stream:true requests, so the
-// bytes are relayed verbatim with a flush per chunk. If the upstream turns
-// out to answer with a plain JSON document (first byte '{'), the response is
-// collected and converted into SSE instead, so clients always get what they
+// streamPassthrough forwards upstream bytes as they arrive. If the upstream
+// answers with a plain JSON document (first byte '{') instead of SSE, the
+// response is collected and converted, so clients always get what they
 // asked for.
-func (cp *ControlPlane) streamPassthrough(w http.ResponseWriter, stream <-chan cocoon.Chunk) {
+func (p *OpenAIProxy) streamPassthrough(w http.ResponseWriter, model string, stream <-chan cocoon.Chunk) {
 	var pending []byte
 	for chunk := range stream {
 		if chunk.Err != nil {
-			cp.finishSSEWithError(w, pending, chunk.Err)
+			p.finishSSEWithError(w, pending, chunk.Err)
 			return
 		}
 		pending = append(pending, chunk.Bytes...)
@@ -262,9 +359,10 @@ func (cp *ControlPlane) streamPassthrough(w http.ResponseWriter, stream <-chan c
 				rest, lastErr := collectChunks(stream)
 				pending = append(pending, rest...)
 				if lastErr != nil {
-					cp.finishSSEWithError(w, nil, lastErr)
+					p.finishSSEWithError(w, nil, lastErr)
 					return
 				}
+				p.reportUsage(model, pending)
 				writeSSEFromCompletion(w, pending)
 				return
 			}
@@ -301,20 +399,21 @@ func (cp *ControlPlane) streamPassthrough(w http.ResponseWriter, stream <-chan c
 // collectRespondAsSSE serves an SSE response built from a non-streamed
 // upstream answer: the full completion arrives, then is emitted as a single
 // delta chunk plus [DONE]. UIs keep one streaming code path either way.
-func (cp *ControlPlane) collectRespondAsSSE(w http.ResponseWriter, stream <-chan cocoon.Chunk) {
+func (p *OpenAIProxy) collectRespondAsSSE(w http.ResponseWriter, model string, stream <-chan cocoon.Chunk) {
 	buf, lastErr := collectChunks(stream)
 	if lastErr != nil && len(buf) == 0 {
-		writeJSONError(w, http.StatusBadGateway, lastErr.Error())
+		WriteJSONError(w, http.StatusBadGateway, lastErr.Error())
 		return
 	}
+	p.reportUsage(model, buf)
 	writeSSEFromCompletion(w, buf)
 }
 
 // finishSSEWithError reports an upstream error. If nothing was written yet,
 // a plain JSON error response is used; otherwise an SSE error event.
-func (cp *ControlPlane) finishSSEWithError(w http.ResponseWriter, pending []byte, err error) {
+func (p *OpenAIProxy) finishSSEWithError(w http.ResponseWriter, pending []byte, err error) {
 	if len(bytes.TrimSpace(pending)) == 0 {
-		writeJSONError(w, http.StatusBadGateway, err.Error())
+		WriteJSONError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	startSSE(w)
@@ -393,60 +492,16 @@ func completionToChunk(completion []byte) ([]byte, bool) {
 	return out, true
 }
 
-// handleModels lists models available on the connected proxies.
-func (cp *ControlPlane) handleModels(w http.ResponseWriter, r *http.Request) {
-	cp.applyCORS(w)
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	sess, err := cp.pickSession()
-	if err != nil {
-		writeJSONError(w, http.StatusServiceUnavailable, err.Error())
-		return
-	}
-	models, err := sess.WorkerTypes(r.Context())
-	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, "models: "+err.Error())
-		return
-	}
-	data := make([]any, 0, len(models))
-	for _, model := range models {
-		workers := make([]any, 0, len(model.Workers))
-		for _, worker := range model.Workers {
-			workers = append(workers, map[string]any{
-				"coefficient":          worker.Coefficient,
-				"running_requests":     worker.ActiveRequests,
-				"max_running_requests": worker.MaxActiveRequests,
-			})
-		}
-		data = append(data, map[string]any{
-			"id":       model.Name,
-			"object":   "model",
-			"created":  0,
-			"owned_by": "?",
-			"workers":  workers,
-		})
-	}
-	w.Header().Set("Content-Type", "application/json")
-	resp := map[string]any{
-		"object": "list",
-		"data":   data,
-	}
-	_ = json.NewEncoder(w).Encode(resp)
-}
-
-func (cp *ControlPlane) applyCORS(w http.ResponseWriter) {
+// ApplyCORS sets permissive CORS headers (the API is auth-gated by key, not
+// origin; local runner endpoints are loopback-only).
+func ApplyCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 }
 
-func writeJSONError(w http.ResponseWriter, status int, msg string) {
+// WriteJSONError writes an OpenAI-style error body.
+func WriteJSONError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	body := map[string]any{

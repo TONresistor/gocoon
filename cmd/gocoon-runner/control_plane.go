@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/TONresistor/gocoon/pkg/core"
 	"github.com/TONresistor/gocoon/pkg/contracts/client"
 	"github.com/xssnick/tonutils-go/address"
 	"github.com/xssnick/tonutils-go/tvm/cell"
@@ -29,9 +30,10 @@ import (
 //	GET /stats                   HTML overview (debug)
 type ControlPlane struct {
 	port   int
-	engine *Engine
-	state  *RunnerState
+	engine *core.Engine
+	state  *core.RunnerState
 	logger *slog.Logger
+	proxy  *core.OpenAIProxy
 
 	// App, when set, mounts the /api/* onboarding and lifecycle endpoints.
 	App *AppAPI
@@ -41,85 +43,12 @@ type ControlPlane struct {
 	started time.Time
 }
 
-// RunnerState is what the runner exposes to /jsonstats. Updated by the
-// session manager; read by the HTTP handler.
-type RunnerState struct {
-	mu               sync.RWMutex
-	WalletBalance    uint64
-	TONLastSyncedAt  int64
-	Enabled          bool
-	GitCommit        string
-	RootAddress      string
-	OwnerAddress     string
-	CheckImageHashes bool
-	ProxyConnections []ProxyConnectionEntry
-	Proxies          []ProxyStatEntry
-}
-
-// SetProxyConnections atomically replaces the proxy_connections list.
-func (s *RunnerState) SetProxyConnections(entries []ProxyConnectionEntry) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ProxyConnections = entries
-}
-
-// SetProxies atomically replaces the proxies list.
-func (s *RunnerState) SetProxies(entries []ProxyStatEntry) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.Proxies = entries
-}
-
-// SetSyncTime updates ton_last_synced_at.
-func (s *RunnerState) SetSyncTime(t int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.TONLastSyncedAt = t
-}
-
-// SetWalletBalance updates the wallet balance shown in /jsonstats.
-func (s *RunnerState) SetWalletBalance(b uint64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.WalletBalance = b
-}
-
-// SetIdentity updates the engine identity exposed in /jsonstats when the
-// engine starts or stops.
-func (s *RunnerState) SetIdentity(rootAddress, ownerAddress string, enabled bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.RootAddress = rootAddress
-	s.OwnerAddress = ownerAddress
-	s.Enabled = enabled
-}
-
-// ProxyConnectionEntry mirrors the JSON shape the browser parses.
-type ProxyConnectionEntry struct {
-	Address        string `json:"address"`
-	IsReady        bool   `json:"is_ready"`
-	ProxySCAddress string `json:"proxy_sc_address"`
-}
-
-// ProxyStatEntry mirrors RunnerProxyStat in the browser TS interface.
-type ProxyStatEntry struct {
-	ProxySCAddress                       string `json:"proxy_sc_address"`
-	ProxyPublicKey                       string `json:"proxy_public_key"`
-	SCAddress                            string `json:"sc_address"`
-	State                                int    `json:"state"`
-	TokensUsedProxyCommittedToBlockchain int64  `json:"tokens_used_proxy_committed_to_blockchain"`
-	TokensUsedProxyCommittedToDB         int64  `json:"tokens_used_proxy_committed_to_db"`
-	TokensUsedProxyMax                   int64  `json:"tokens_used_proxy_max"`
-	TokensCharged                        int64  `json:"tokens_charged"`
-	TokensPayed                          int64  `json:"tokens_payed"`
-}
-
 // jsonStatsResponse is the exact wire shape the browser parses.
 type jsonStatsResponse struct {
-	Status           jsonStatsStatus        `json:"status"`
-	LocalConf        jsonStatsLocalConf     `json:"localconf"`
-	ProxyConnections []ProxyConnectionEntry `json:"proxy_connections"`
-	Proxies          []ProxyStatEntry       `json:"proxies"`
+	Status           jsonStatsStatus             `json:"status"`
+	LocalConf        jsonStatsLocalConf          `json:"localconf"`
+	ProxyConnections []core.ProxyConnectionEntry `json:"proxy_connections"`
+	Proxies          []core.ProxyStatEntry       `json:"proxies"`
 }
 
 type jsonStatsStatus struct {
@@ -136,8 +65,14 @@ type jsonStatsLocalConf struct {
 }
 
 // NewControlPlane returns a configured ControlPlane.
-func NewControlPlane(port int, engine *Engine, state *RunnerState, logger *slog.Logger) *ControlPlane {
-	return &ControlPlane{port: port, engine: engine, state: state, logger: logger}
+func NewControlPlane(port int, engine *core.Engine, state *core.RunnerState, logger *slog.Logger) *ControlPlane {
+	return &ControlPlane{
+		port:   port,
+		engine: engine,
+		state:  state,
+		logger: logger,
+		proxy:  &core.OpenAIProxy{Engine: engine, Logger: logger},
+	}
 }
 
 // Start begins serving on 127.0.0.1:<port>.
@@ -147,12 +82,12 @@ func (cp *ControlPlane) Start() error {
 	mux.HandleFunc("/request/close", cp.requestHandler("close"))
 	mux.HandleFunc("/request/withdraw", cp.requestHandler("withdraw"))
 	mux.HandleFunc("/request/topup", cp.requestHandler("topup"))
-	mux.HandleFunc("/v1/chat/completions", cp.handleChatCompletions)
-	mux.HandleFunc("/v1/models", cp.handleModels)
+	mux.HandleFunc("/v1/chat/completions", cp.proxy.HandleChatCompletions)
+	mux.HandleFunc("/v1/models", cp.proxy.HandleModels)
 	mux.HandleFunc("/stats", cp.handleStats)
 	mux.HandleFunc("/", cp.handleIndex)
 	if cp.App != nil {
-		cp.App.routes(mux, cp.applyCORS)
+		cp.App.routes(mux, core.ApplyCORS)
 	}
 
 	cp.mu.Lock()
@@ -218,8 +153,15 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
+// Flush forwards streaming flushes to the underlying writer (SSE).
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func (cp *ControlPlane) handleJSONStats(w http.ResponseWriter, r *http.Request) {
-	cp.applyCORS(w)
+	core.ApplyCORS(w)
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -228,23 +170,23 @@ func (cp *ControlPlane) handleJSONStats(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	cp.state.mu.RLock()
+	snap := cp.state.Snapshot()
 	resp := jsonStatsResponse{
 		Status: jsonStatsStatus{
-			WalletBalance:   cp.state.WalletBalance,
-			TONLastSyncedAt: cp.state.TONLastSyncedAt,
-			Enabled:         cp.state.Enabled,
-			GitCommit:       cp.state.GitCommit,
+			WalletBalance:   snap.WalletBalance,
+			TONLastSyncedAt: snap.TONLastSyncedAt,
+			Enabled:         snap.Enabled,
+			GitCommit:       snap.GitCommit,
 		},
 		LocalConf: jsonStatsLocalConf{
-			RootAddress:      cp.state.RootAddress,
-			OwnerAddress:     cp.state.OwnerAddress,
-			CheckImageHashes: cp.state.CheckImageHashes,
+			RootAddress:      snap.RootAddress,
+			OwnerAddress:     snap.OwnerAddress,
+			CheckImageHashes: snap.CheckImageHashes,
 		},
-		ProxyConnections: append(make([]ProxyConnectionEntry, 0, len(cp.state.ProxyConnections)), cp.state.ProxyConnections...),
-		Proxies:          append(make([]ProxyStatEntry, 0, len(cp.state.Proxies)), cp.state.Proxies...),
+		// Arrays must serialize as [] (not null) for the browser parser.
+		ProxyConnections: append(make([]core.ProxyConnectionEntry, 0, len(snap.ProxyConnections)), snap.ProxyConnections...),
+		Proxies:          append(make([]core.ProxyStatEntry, 0, len(snap.Proxies)), snap.Proxies...),
 	}
-	cp.state.mu.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		cp.logger.Error("jsonstats encode", "err", err)
@@ -259,7 +201,7 @@ func (cp *ControlPlane) handleJSONStats(w http.ResponseWriter, r *http.Request) 
 // broadcasts it via the configured cocoon-wallet broadcaster.
 func (cp *ControlPlane) requestHandler(verb string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cp.applyCORS(w)
+		core.ApplyCORS(w)
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
 			return
@@ -337,6 +279,11 @@ func (cp *ControlPlane) handleStats(w http.ResponseWriter, _ *http.Request) {
 func (cp *ControlPlane) handleIndex(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprintln(w, "gocoon-runner: see /jsonstats and /stats")
+}
+
+// writeJSONError keeps the historical local name for app_api/chats handlers.
+func writeJSONError(w http.ResponseWriter, status int, msg string) {
+	core.WriteJSONError(w, status, msg)
 }
 
 // wrapShortAnswer reproduces upstream's wrap_short_answer_to_http output.

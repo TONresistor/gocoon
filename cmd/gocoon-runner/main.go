@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/TONresistor/gocoon/pkg/core"
 	"github.com/TONresistor/gocoon/pkg/cocoon"
 	"github.com/TONresistor/gocoon/pkg/setup"
 )
@@ -118,7 +119,7 @@ func run(configPath, dataDir string, logs *logRing, logger *slog.Logger) error {
 	port := 10000
 	configExists := setup.FileExists(configPath)
 	if configExists {
-		cfg, err := LoadClientConfig(configPath)
+		cfg, err := core.LoadClientConfig(configPath)
 		if err != nil {
 			return err
 		}
@@ -127,11 +128,11 @@ func run(configPath, dataDir string, logs *logRing, logger *slog.Logger) error {
 		return fmt.Errorf("config: read %s: no such file", configPath)
 	}
 
-	state := &RunnerState{
+	state := &core.RunnerState{
 		GitCommit:        cocoon.Commit,
 		CheckImageHashes: false,
 	}
-	engine := NewEngine(dataDir, state, logger)
+	engine := core.NewEngine(dataDir, state, logger)
 	defer engine.Stop()
 
 	cp := NewControlPlane(port, engine, state, logger)
