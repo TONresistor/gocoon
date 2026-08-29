@@ -15,6 +15,8 @@ C++ runner build chain.
 
 ## Install
 
+Building from source requires Go 1.26 or newer.
+
 ```bash
 git clone https://github.com/TONresistor/gocoon.git
 cd gocoon

@@ -4,6 +4,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Raise the minimum supported Go version from 1.25.5 to 1.26.0.
+- Bump tonutils-go from v1.17.2 to v1.18.0 (and indirect
+  github.com/pierrec/lz4/v4 v4.1.27, golang.org/x/crypto v0.54.0,
+  golang.org/x/sys v0.47.0).
+
 ## [0.2.1] - 2026-06-20
 
 ### Changed
