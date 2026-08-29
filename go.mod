@@ -3,7 +3,7 @@ module github.com/TONresistor/gocoon
 go 1.26.0
 
 require (
-	github.com/xssnick/tonutils-go v1.18.1-0.20260801052814-fc795b3d6ca7
+	github.com/xssnick/tonutils-go v1.18.0
 	go.etcd.io/bbolt v1.4.3
 )
 
